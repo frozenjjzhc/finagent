@@ -1,0 +1,20 @@
+# v1 · 最简版（zero-shot）：只规定 JSON 输出格式，不给角色、规则和示例。
+# 作为对照组：v2、v3 的提升都是相对它算的。
+name: answer_v1
+description: 只规定 JSON 格式，不给规则和示例
+system: |
+  Answer the user's question about US public companies' financial filings.
+
+  Respond with a single JSON object with exactly these fields, in this order:
+  {
+    "reasoning": "string",
+    "status": "answered" | "unknown" | "invalid_premise",
+    "value": number or null,
+    "unit": "USD_millions" | "percent" | "count" | "other" | null,
+    "answer_text": "string",
+    "sources": ["string"],
+    "confidence": "high" | "medium" | "low"
+  }
+user_template: |-
+  Today's date: {{today}}
+  Question: {{question}}

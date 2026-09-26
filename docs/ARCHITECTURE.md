@@ -79,7 +79,7 @@ Q: "Compare NVDA and AMD gross margin change from FY2023 to FY2024"
 - **好处**：做消融实验只需要改 config，不用改代码；SCOREBOARD 每一行都对应一个 config 文件。
 
 ### ADR-4 · Prompt 是文件，不是代码里的字符串
-- **决定**：`prompts/*.md`，文件名带版本号；eval 记录用的是哪个 prompt。
+- **决定**：`prompts/*.yaml`（YAML 能表达 system、few-shot 示例、user 模板这样的结构），文件名带版本号；模板变量写成 `{{name}}`（不和 JSON 的花括号、金额的 `$` 冲突）；eval 记录用的是哪个 prompt。
 - **好处**：可以 diff、可以回滚，改 prompt 不用碰代码。
 
 ### ADR-5 · 一切可追踪（trace everything）
@@ -108,7 +108,7 @@ finagent/
 |-- configs/
 |   |-- systems/     v0.1.yaml ... v1.0.yaml（每个系统版本一份）            [L01+]
 |   '-- train/       sft_*.yaml  dpo_*.yaml                               [L11+]
-|-- prompts/         answer_v1.md ...                                     [L02]
+|-- prompts/         answer_v1.yaml / v2 / v3（每个版本一个文件）          [L02]
 |-- evalsets/        seed_closed_book.jsonl [L01]  finqa / financebench / multihop [L03+]
 |-- src/finagent/
 |   |-- cli.py                                                            [L01]
@@ -116,6 +116,7 @@ finagent/
 |   |-- llm/         pricing.py（按 token 计费）                          [L01]
 |   |-- llm/         base.py  openai_compat.py                            [L01]
 |   |                local_hf.py                                          [L08]
+|   |-- schemas.py   prompts.py（答案 schema、prompt 模板）                [L02]
 |   |-- pipeline/    answer.py                                            [L02]
 |   |-- eval/        datasets.py  metrics.py  judge.py  run.py            [L03]
 |   |-- tools/       registry.py  calculator.py                           [L04]
@@ -140,7 +141,7 @@ finagent/
 |---|---|---|
 | v0.0 | 骨架、环境 | 什么都做不了，但知道要去哪 |
 | v0.1 ✅ | `llm/`（base / openai_compat / pricing）、`cli.py`、`tracing.py`、`config.py` | 闭卷问答，记录成本 |
-| v0.2 | `prompts/`、`pipeline/answer.py` | 结构化答案 |
+| v0.2 ✅ | `prompts/`、`schemas.py`、`prompts.py`、`pipeline/answer.py` | 结构化答案，可自动判分 |
 | v0.3 | `eval/`、`evalsets/`、SCOREBOARD | **可度量** |
 | v0.4 | `tools/`、`agent/loop.py` | 算对数 |
 | v0.5 | `data/`、`rag/` 基础 | 有依据地回答，带引用 |

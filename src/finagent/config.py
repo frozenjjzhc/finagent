@@ -45,14 +45,24 @@ class LLMConfig(BaseModel):
         return self
 
 
+class PromptConfig(BaseModel):
+    """用哪个 prompt 模板（L02）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str  # 对应 prompts/<name>.yaml
+    max_attempts: int = Field(default=2, ge=1)  # 输出校验失败时最多尝试几次（含第一次）
+
+
 class SystemConfig(BaseModel):
-    """一个完整的系统版本。L01 只有 llm；后面会陆续加 prompt、retrieval、tools。"""
+    """一个完整的系统版本。L01 只有 llm；L02 加上 prompt；后面还会加 retrieval、tools。"""
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
     description: str = ""
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    prompt: PromptConfig | None = None  # None = 裸调模式（v0.1）：没有模板，也不要求结构化输出
 
 
 def load_config(path: str | Path) -> SystemConfig:

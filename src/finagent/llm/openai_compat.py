@@ -40,8 +40,13 @@ class OpenAICompatClient:
             max_retries=cfg.max_retries,
         )
 
-    def chat(self, messages: list[Message], on_delta: DeltaCallback | None = None) -> LLMResponse:
-        request = self._build_request(messages)
+    def chat(
+        self,
+        messages: list[Message],
+        on_delta: DeltaCallback | None = None,
+        json_mode: bool = False,
+    ) -> LLMResponse:
+        request = self._build_request(messages, json_mode)
         started_at = datetime.now(timezone.utc)
         t0 = time.perf_counter()  # 测耗时用 perf_counter（单调时钟），不用 time.time()
         try:
@@ -50,15 +55,15 @@ class OpenAICompatClient:
             else:
                 resp = self._call_stream(request, t0, on_delta)
         except openai.OpenAIError as e:
-            self._log(messages, started_at, error=e)  # 失败的调用也要记下来
+            self._log(messages, started_at, json_mode=json_mode, error=e)  # 失败的调用也要记下来
             raise
         resp.cost_usd = cost_usd(self.cfg.model, resp.usage, started_at)
-        self._log(messages, started_at, resp=resp, stream=on_delta is not None)
+        self._log(messages, started_at, json_mode=json_mode, resp=resp, stream=on_delta is not None)
         return resp
 
     # ------------------------------------------------------------------ 请求
 
-    def _build_request(self, messages: list[Message]) -> dict[str, Any]:
+    def _build_request(self, messages: list[Message], json_mode: bool = False) -> dict[str, Any]:
         request: dict[str, Any] = {
             "model": self.cfg.model,
             "messages": messages,
@@ -73,6 +78,10 @@ class OpenAICompatClient:
             request["max_tokens"] = self.cfg.max_tokens
         if self.cfg.temperature is not None:
             request["temperature"] = self.cfg.temperature
+        if json_mode:
+            # JSON mode：只保证输出是合法 JSON，不保证符合我们的 schema。
+            # DeepSeek 还要求 prompt 里出现 "json" 这个词，并给出格式示例。
+            request["response_format"] = {"type": "json_object"}
         return request
 
     # ------------------------------------------------------------------ 非流式
@@ -142,6 +151,7 @@ class OpenAICompatClient:
         self,
         messages: list[Message],
         started_at: datetime,
+        json_mode: bool = False,
         resp: LLMResponse | None = None,
         stream: bool = False,
         error: Exception | None = None,
@@ -153,6 +163,7 @@ class OpenAICompatClient:
             "model": self.cfg.model,
             "thinking": self.cfg.thinking,
             "reasoning_effort": self.cfg.reasoning_effort,
+            "json_mode": json_mode,
             "peak": is_peak(started_at),
             "stream": stream,
             "messages": messages,

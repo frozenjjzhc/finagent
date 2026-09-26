@@ -18,15 +18,21 @@ from rich.console import Console
 from rich.table import Table
 
 from finagent import tracing
-from finagent.config import LLMConfig, load_config, with_overrides
+from finagent.config import LLMConfig, PromptConfig, load_config, with_overrides
 from finagent.llm.base import LLMResponse, Message
 from finagent.llm.openai_compat import OpenAICompatClient
+from finagent.pipeline.answer import AnswerResult, answer_question
+from finagent.prompts import load_prompt
+from finagent.schemas import format_value
 
 app = typer.Typer(
     help="FinAgent：美股财报问答助手（学习项目）", no_args_is_help=True, add_completion=False
 )
 
-DEFAULT_CONFIG = "configs/systems/v0.1.yaml"
+DEFAULT_CONFIG = "configs/systems/v0.2.yaml"  # 默认用最新版本；旧版本用 --config 指定
+
+STATUS_LABELS = {"answered": "已回答", "unknown": "不知道", "invalid_premise": "前提不成立"}
+CONFIDENCE_LABELS = {"high": "高", "medium": "中", "low": "低"}
 
 
 def build_messages(question: str, system_prompt: str | None = None) -> list[Message]:
@@ -59,10 +65,14 @@ def ask(
     # 参数名不能叫 system：函数体里已经有一个变量 system（整份系统配置），会把它覆盖掉。
     # 所以参数叫 system_prompt，再用 "--system" 指定命令行上的写法。
     system_prompt: Annotated[
-        str | None, typer.Option("--system", help="作为 system 消息放在最前面的一段话")
+        str | None,
+        typer.Option("--system", help="作为 system 消息放在最前面的一段话（只用于裸调模式）"),
     ] = None,
+    show_json: Annotated[
+        bool, typer.Option("--json", help="结构化模式下，直接打印校验通过的 JSON")
+    ] = False,
 ) -> None:
-    """问一个问题。v0.1：闭卷、没有检索和工具；可以用 --system 加一条 system 消息。"""
+    """问一个问题。配置里有 prompt（v0.2 起）就输出结构化答案；没有（v0.1）就是裸调。"""
     system = load_config(config)
     try:
         llm_cfg = with_overrides(
@@ -77,6 +87,29 @@ def ask(
         raise typer.Exit(2) from None
 
     client = OpenAICompatClient(llm_cfg, tag=system.name)
+    if system.prompt is None:
+        _ask_raw(client, llm_cfg, question, system_prompt, stream, show_reasoning)
+    else:
+        if system_prompt:
+            typer.secho(
+                "--system 只能用于裸调模式（--config configs/systems/v0.1.yaml）；"
+                "v0.2 起，system prompt 来自 prompt 文件。",
+                fg="red",
+                err=True,
+            )
+            raise typer.Exit(2)
+        _ask_structured(client, llm_cfg, system.prompt, question, show_json, show_reasoning)
+
+
+def _ask_raw(
+    client: OpenAICompatClient,
+    llm_cfg: LLMConfig,
+    question: str,
+    system_prompt: str | None,
+    stream: bool,
+    show_reasoning: bool,
+) -> None:
+    """裸调模式（v0.1）：原样把问题发给模型，打印自由文本回答。"""
     messages = build_messages(question, system_prompt)
     printer = _StreamPrinter(show_reasoning) if stream else None
     try:
@@ -93,6 +126,59 @@ def ask(
     typer.secho(_footer(llm_cfg, resp), fg="bright_black")
     if resp.finish_reason == "length":
         typer.secho("警告：输出被 max_tokens 截断了，上面的回答不完整！", fg="yellow")
+
+
+def _ask_structured(
+    client: OpenAICompatClient,
+    llm_cfg: LLMConfig,
+    prompt_cfg: PromptConfig,
+    question: str,
+    show_json: bool,
+    show_reasoning: bool,
+) -> None:
+    """结构化模式（v0.2 起）：套用 prompt 模板，要求 JSON 输出，校验后按字段打印。
+
+    JSON 要完整收到才能解析，所以这里不走流式。
+    """
+    prompt = load_prompt(prompt_cfg.name)
+    try:
+        result = answer_question(client, prompt, question, max_attempts=prompt_cfg.max_attempts)
+    except openai.OpenAIError as e:
+        typer.secho(_explain_error(e), fg="red", err=True)
+        raise typer.Exit(1) from None
+
+    if show_reasoning:
+        for r in result.responses:
+            if r.reasoning:
+                typer.secho(f"[思考过程]\n{r.reasoning}\n", fg="bright_black")
+
+    a = result.answer
+    if a is None:
+        typer.secho(f"{result.attempts} 次尝试都没有得到合格的结构化答案：", fg="red", err=True)
+        for i, err in enumerate(result.errors, 1):
+            typer.secho(f"  第 {i} 次：{err}", fg="red", err=True)
+        typer.secho(f"最后一次的原始输出：\n{result.responses[-1].content}", fg="bright_black")
+        typer.secho(_structured_footer(llm_cfg, prompt.name, result), fg="bright_black")
+        raise typer.Exit(1)
+
+    if show_json:
+        typer.echo(a.model_dump_json(indent=2))
+    else:
+        typer.echo(
+            f"答案：{format_value(a)}　"
+            f"[{STATUS_LABELS[a.status]}，自评信心：{CONFIDENCE_LABELS[a.confidence]}]"
+        )
+        typer.echo(f"说明：{a.answer_text}")
+        typer.secho(f"推理：{a.reasoning}", fg="bright_black")
+        if a.sources:
+            typer.secho(
+                f"出处（模型自称，闭卷无法验证）：{'；'.join(a.sources)}", fg="bright_black"
+            )
+    typer.secho(_structured_footer(llm_cfg, prompt.name, result), fg="bright_black")
+    if result.attempts > 1:
+        typer.secho(
+            f"注意：第一次输出没通过校验（{result.errors[0]}），重试后才成功。", fg="yellow"
+        )
 
 
 @app.command()
@@ -176,6 +262,20 @@ def _footer(cfg: LLMConfig, r: LLMResponse) -> str:
         f"输入 {u.prompt_tokens}（缓存命中 {u.cache_hit_tokens}） · "
         f"输出 {u.completion_tokens}（思考 {u.reasoning_tokens}） | {cost} | "
         f"{r.latency_s:.1f}s{ttft} | finish={r.finish_reason}]"
+    )
+
+
+def _structured_footer(cfg: LLMConfig, prompt_name: str, result: AnswerResult) -> str:
+    """结构化模式的底部信息：把所有尝试的 token 和花费加起来。"""
+    rs = result.responses
+    prompt_tokens = sum(r.usage.prompt_tokens for r in rs)
+    cache_hit = sum(r.usage.cache_hit_tokens for r in rs)
+    completion = sum(r.usage.completion_tokens for r in rs)
+    cost = "未知" if result.cost_usd is None else f"${result.cost_usd:.6f}"
+    return (
+        f"[{cfg.model} | thinking={'on' if cfg.thinking else 'off'} | prompt={prompt_name} | "
+        f"尝试 {result.attempts} 次 | 输入 {prompt_tokens}（缓存命中 {cache_hit}） · 输出 {completion} | "
+        f"{cost} | {result.latency_s:.1f}s]"
     )
 
 

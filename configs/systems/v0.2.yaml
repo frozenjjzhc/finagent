@@ -1,0 +1,19 @@
+# v0.2 · Prompt Engineering + 结构化输出（L02）
+# 相比 v0.1：加了 prompt 模板（system 规则 + few-shot），要求 JSON 输出并用 pydantic 校验。
+# 仍然是闭卷：没有检索，也没有工具。
+name: v0.2
+description: 闭卷；prompt 模板 + JSON mode + schema 校验 + 带反馈重试
+
+llm:
+  backend: openai_compat
+  base_url: https://api.deepseek.com
+  model: deepseek-flash
+  api_key_env: DEEPSEEK_API_KEY
+  thinking: false        # 先固定关掉，这样对比实验只有 prompt 一个变量
+  max_tokens: 2048       # 结构化回答很短，2048 足够；被截断会导致 JSON 不完整
+
+prompt:
+  # L02 实验（10 题，2026-09-26）：v1 答对 5、v2 答对 8、v3 答对 7。暂定用 v2：得分最高、更简单。
+  # 但 v2 和 v3 只差 1 题，样本太少，这个差距不可靠；L03 用更大的评测集再定。
+  name: answer_v2
+  max_attempts: 2        # 输出校验失败时，带着错误信息再试一次

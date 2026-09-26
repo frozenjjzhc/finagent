@@ -14,7 +14,7 @@
 
 ## 当前状态
 
-**v0.1**：闭卷裸调 DeepSeek，`finagent ask` / `finagent usage` 可用（L01）
+**v0.2**：闭卷；prompt 模板 + JSON 结构化输出 + schema 校验（L02）。`finagent ask` 默认输出结构化答案，`--config configs/systems/v0.1.yaml` 可回到裸调模式
 
 ## 快速开始（Windows / PowerShell）
 

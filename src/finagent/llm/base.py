@@ -50,11 +50,17 @@ class LLMResponse:
 class LLMClient(Protocol):
     """所有后端都要实现的接口。上层代码只依赖它，不依赖具体后端。"""
 
-    def chat(self, messages: list[Message], on_delta: DeltaCallback | None = None) -> LLMResponse:
+    def chat(
+        self,
+        messages: list[Message],
+        on_delta: DeltaCallback | None = None,
+        json_mode: bool = False,
+    ) -> LLMResponse:
         """发送一轮对话。
 
         on_delta 为 None：一次性返回。
         on_delta 不为 None：走流式，每收到一个片段就调用一次 on_delta，
         最后仍然返回完整的 LLMResponse（包括 usage 和 cost）。
+        json_mode 为 True：要求模型只输出一个合法的 JSON 对象（L02）。
         """
         ...
