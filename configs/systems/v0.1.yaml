@@ -1,0 +1,12 @@
+# v0.1 · 裸调 API（L01）
+# 没有 system prompt、没有检索、没有工具：这是"基线中的基线"，后面每一版都和它比。
+name: v0.1
+description: 闭卷裸调 DeepSeek
+
+llm:
+  backend: openai_compat
+  base_url: https://api.deepseek.com
+  model: deepseek-flash
+  api_key_env: DEEPSEEK_API_KEY   # 只写变量名，key 本身在 .env 里
+  thinking: false                 # DeepSeek 默认开启 thinking；这里显式关掉，更快更便宜
+  max_tokens: 8192                # 不设的话，服务端默认 8K（关 thinking）/ 64K（开 thinking）

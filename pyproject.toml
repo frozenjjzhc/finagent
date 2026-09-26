@@ -1,0 +1,43 @@
+# FinAgent 的项目元数据与依赖声明（PEP 621）。逐段讲解见 lessons/L00 第 6.3 节。
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "finagent"
+version = "0.1.0"  # 每完成一课 bump 一次：L01 -> 0.1.0，L02 -> 0.2.0 ...
+description = "Financial-filings QA agent: from prompting & RAG to LoRA/DPO distillation into a local small model."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Hanchen Zou" }]
+# 只列 L01-L04 需要的核心依赖；后续阶段的依赖在下面的 extras 里，到对应课次再装。
+dependencies = [
+    "openai",         # OpenAI 兼容 SDK：L01 连 DeepSeek，L15 连本地推理服务
+    "pydantic>=2",    # 数据校验：配置、结构化输出       (L01-L02)
+    "python-dotenv",  # 从 .env 读取密钥               (L00)
+    "pyyaml",         # 读取 configs/*.yaml            (L01)
+    "typer",          # 命令行                          (L01)
+    "rich",           # 终端表格（typer 本身也依赖它，但我们直接 import，就显式声明）
+]
+
+[project.optional-dependencies]
+# 安装：pip install -e ".[rag]"   （PowerShell 里引号必须加）
+# torch 故意不放这里：Windows 上 PyPI 默认给 CPU 版，CUDA 版要从 PyTorch 官方源装（L00 讲义 7.3）
+rag = ["httpx", "beautifulsoup4", "sentence-transformers", "faiss-cpu", "rank-bm25"]  # L05-L06
+train = ["transformers", "accelerate", "peft", "trl", "datasets", "bitsandbytes"]     # L08-L14
+serve = ["fastapi", "uvicorn"]                                                        # L15
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+finagent = "finagent.cli:app"   # 安装后生成 finagent 命令；改了这里要重新 pip install -e . 一次
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

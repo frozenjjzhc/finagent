@@ -1,0 +1,27 @@
+# --- 密钥：永远不提交 ---
+.env
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# --- 大文件：数据 / 运行结果 / 模型权重 ---
+# 开头的 / 表示只匹配项目根目录；写成 data/ 会误伤 src/finagent/data/（见 L00 讲义 6.5）
+/data/
+/runs/
+*.safetensors
+*.bin
+*.pt
+*.gguf
+*.faiss
+
+# --- 编辑器 / Notebook ---
+.ipynb_checkpoints/
+.vscode/
+.idea/
