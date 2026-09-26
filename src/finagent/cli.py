@@ -19,7 +19,7 @@ from rich.table import Table
 
 from finagent import tracing
 from finagent.config import LLMConfig, load_config, with_overrides
-from finagent.llm.base import LLMResponse
+from finagent.llm.base import LLMResponse, Message
 from finagent.llm.openai_compat import OpenAICompatClient
 
 app = typer.Typer(
@@ -27,6 +27,19 @@ app = typer.Typer(
 )
 
 DEFAULT_CONFIG = "configs/systems/v0.1.yaml"
+
+
+def build_messages(question: str, system_prompt: str | None = None) -> list[Message]:
+    """组装发给模型的 messages。
+
+    规则：有 system prompt 时，它必须是第一条；没有（或只有空白）时，就不加 system 消息。
+    单独写成一个函数，是为了能直接测试它，不用每次都调 API。
+    """
+    messages: list[Message] = []
+    if system_prompt and system_prompt.strip():
+        messages.append({"role": "system", "content": system_prompt.strip()})
+    messages.append({"role": "user", "content": question})
+    return messages
 
 
 @app.command()
@@ -43,8 +56,13 @@ def ask(
     ] = None,
     stream: Annotated[bool, typer.Option("--stream/--no-stream", help="是否流式输出")] = True,
     show_reasoning: Annotated[bool, typer.Option(help="显示 thinking 模式的思考过程")] = False,
+    # 参数名不能叫 system：函数体里已经有一个变量 system（整份系统配置），会把它覆盖掉。
+    # 所以参数叫 system_prompt，再用 "--system" 指定命令行上的写法。
+    system_prompt: Annotated[
+        str | None, typer.Option("--system", help="作为 system 消息放在最前面的一段话")
+    ] = None,
 ) -> None:
-    """问一个问题。v0.1：闭卷、没有 system prompt、没有检索和工具。"""
+    """问一个问题。v0.1：闭卷、没有检索和工具；可以用 --system 加一条 system 消息。"""
     system = load_config(config)
     try:
         llm_cfg = with_overrides(
@@ -59,7 +77,7 @@ def ask(
         raise typer.Exit(2) from None
 
     client = OpenAICompatClient(llm_cfg, tag=system.name)
-    messages = [{"role": "user", "content": question}]  # v0.1：就这一条消息，别的什么都没有
+    messages = build_messages(question, system_prompt)
     printer = _StreamPrinter(show_reasoning) if stream else None
     try:
         resp = client.chat(messages, on_delta=printer)
