@@ -65,6 +65,35 @@ class SystemConfig(BaseModel):
     prompt: PromptConfig | None = None  # None = 裸调模式（v0.1）：没有模板，也不要求结构化输出
 
 
+class JudgeConfig(BaseModel):
+    """LLM 裁判的设置（L03）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    llm: LLMConfig
+    prompt: str = "judge_v1"  # prompts/<prompt>.yaml
+    max_attempts: int = Field(default=2, ge=1)
+
+
+class EvalConfig(BaseModel):
+    """评测怎么进行（L03）。它描述的是"怎么考试"，所以和被评测的系统配置分开存放。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    judge: JudgeConfig
+    relative_tolerance: float = Field(default=0.01, gt=0)  # 数值题默认允许 1% 的相对误差
+    bootstrap_resamples: int = Field(default=2000, ge=100)
+    bootstrap_seed: int = 0
+
+
+def load_eval_config(path: str | Path = "configs/eval.yaml") -> EvalConfig:
+    load_dotenv(PROJECT_ROOT / ".env")
+    p = Path(path)
+    if not p.is_absolute() and not p.exists():
+        p = PROJECT_ROOT / p
+    return EvalConfig.model_validate(yaml.safe_load(p.read_text(encoding="utf-8")))
+
+
 def load_config(path: str | Path) -> SystemConfig:
     """读取系统配置，顺带加载项目根目录的 .env（密钥只从环境变量读取）。"""
     load_dotenv(PROJECT_ROOT / ".env")

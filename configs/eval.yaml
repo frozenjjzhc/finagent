@@ -1,0 +1,19 @@
+# 评测设置（L03）：描述"怎么考试"，和被评测的系统配置分开。
+# 改了这里的任何一项，新旧评测结果就不能直接比较了。
+
+judge:
+  llm:
+    backend: openai_compat
+    base_url: https://api.deepseek.com
+    # 裁判用 pro，被测系统用 flash：模型不同，能减轻"自我偏好"（偏向和自己风格相近的答案）；
+    # 同一家的模型仍可能有相似的偏好，所以还要用人工标注校准（scripts/judge_agreement.py）
+    model: deepseek-v4-pro
+    api_key_env: DEEPSEEK_API_KEY
+    thinking: false
+    max_tokens: 1024
+  prompt: judge_v1
+  max_attempts: 2
+
+relative_tolerance: 0.01      # 数值题：默认允许 1% 相对误差（另有"标准答案精度"规则，见 metrics.py）
+bootstrap_resamples: 2000     # bootstrap 重抽样次数
+bootstrap_seed: 0             # 固定随机种子，保证同样的结果算出同样的置信区间

@@ -1,0 +1,22 @@
+# v0.3 · Eval 驱动开发（L03）
+# 系统本身和 v0.2 一样（闭卷），变化在于：prompt 是根据正式评测选出来的。
+#
+# 选择依据：FinanceBench dev（50 题，judge_v1，2026-09-27）
+#   v1：准确率 32%，答错 48%        v2：准确率 36%，答错 46%        v3：准确率 30%，答错 30%
+#   v2 vs v3 准确率：+6 个百分点，95% 区间 -6 ~ +20，McNemar p = 0.55 → 不显著
+#   v2 vs v3 答错率：+16 个百分点，95% 区间 +2 ~ +30，McNemar p = 0.057 → 边缘
+# 准确率打平时，选答错更少的：PRD 的 U4 要求"没有把握就说不知道，而不是编"。
+name: v0.3
+description: 闭卷；prompt answer_v3（按 dev 评测选出：准确率打平，答错更少）
+
+llm:
+  backend: openai_compat
+  base_url: https://api.deepseek.com
+  model: deepseek-flash
+  api_key_env: DEEPSEEK_API_KEY
+  thinking: false
+  max_tokens: 2048
+
+prompt:
+  name: answer_v3
+  max_attempts: 2

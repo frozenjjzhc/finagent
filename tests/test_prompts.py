@@ -1,10 +1,8 @@
 """Prompt 模板的测试：变量替换、三个版本的文件都能正常加载，以及 few-shot 示例本身的质量。"""
 
-import json
-
 import pytest
 
-from finagent.config import PROJECT_ROOT
+from finagent.eval.datasets import load_evalset
 from finagent.pipeline.answer import parse_answer
 from finagent.prompts import list_prompts, load_prompt, render
 
@@ -30,7 +28,8 @@ def test_render_leaves_json_braces_alone() -> None:
 
 # ---------------------------------------------------------------- 三个版本的 prompt 文件
 
-PROMPT_NAMES = [p.stem for p in list_prompts()]
+# 答题用的 prompt（answer_*）。裁判的 prompt（judge_*）变量不同，单独测试
+PROMPT_NAMES = [p.stem for p in list_prompts() if p.stem.startswith("answer_")]
 
 
 def test_prompt_files_exist() -> None:
@@ -68,12 +67,14 @@ def test_example_answers_match_the_schema(example) -> None:
 
 def test_examples_do_not_leak_eval_questions() -> None:
     # 示例不能和评测题重合，否则就是拿答案教模型，分数是假的（数据泄漏）
-    seed = PROJECT_ROOT / "evalsets" / "seed_closed_book.jsonl"
-    eval_questions = [
-        json.loads(line)["question"]
-        for line in seed.read_text(encoding="utf-8").splitlines()
-        if line
-    ]
+    # L03 起有了多个评测集，要对所有评测集都检查
+    eval_questions = [it.question for name in ("seed", "financebench") for it in load_evalset(name)]
     for name in PROMPT_NAMES:
         for ex in load_prompt(name).examples:
             assert not any(q in ex.user for q in eval_questions), f"{name} 的示例包含评测题"
+
+
+def test_judge_prompt_builds_valid_messages() -> None:
+    messages = load_prompt("judge_v1").build_messages("Q?", reference="REF", candidate="CAND")
+    assert messages[0]["role"] == "system" and "json" in messages[0]["content"].lower()
+    assert all(x in messages[-1]["content"] for x in ("Q?", "REF", "CAND"))

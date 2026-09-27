@@ -1,0 +1,46 @@
+{
+  "financebench": {
+    "source": "https://github.com/patronus-ai/financebench",
+    "commit": "6e138b2f29670bc416456cd16258f9a48b93b76e",
+    "license": "CC BY-NC 4.0",
+    "raw_sha256": {
+      "financebench_open_source.jsonl": "a5a2aa673e573e55675fc3c0f9aa38c1cf59d2abc91edb077534f71f10a71877",
+      "financebench_document_information.jsonl": "1c69127783879de8cdadb159d2181f39bc3123b8e0ebf74031c3969d69189575"
+    }
+  },
+  "split_seed": 42,
+  "files": {
+    "financebench.jsonl": {
+      "sha256": "0bad1deb263af86c1f151513d4250cda18cb4638c06b4208d0b531d686efc7fa",
+      "splits": {
+        "dev": 50,
+        "test": 100
+      },
+      "answer_types": {
+        "text": 100,
+        "number": 50
+      },
+      "categories": {
+        "domain-relevant": 50,
+        "novel-generated": 50,
+        "metrics-generated": 50
+      }
+    },
+    "seed.jsonl": {
+      "sha256": "8cb98b6072e7748375ba71b767cbb27c90aa3c904fce3ed7b70345844f84feb1",
+      "splits": {
+        "dev": 10
+      },
+      "answer_types": {
+        "number": 9,
+        "invalid_premise": 1
+      },
+      "categories": {
+        "fact": 5,
+        "recent": 2,
+        "calc": 2,
+        "trap": 1
+      }
+    }
+  }
+}

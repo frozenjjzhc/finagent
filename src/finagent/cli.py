@@ -8,17 +8,22 @@ typer 的用法：函数参数就是命令行参数。
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
+from pathlib import Path
 from typing import Annotated, Literal
 
 import openai
 import typer
 from pydantic import ValidationError
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.table import Table
 
 from finagent import tracing
-from finagent.config import LLMConfig, PromptConfig, load_config, with_overrides
+from finagent.config import LLMConfig, PromptConfig, load_config, load_eval_config, with_overrides
+from finagent.eval.datasets import load_evalset
+from finagent.eval.run import compare_runs, estimate_cost, run_eval
 from finagent.llm.base import LLMResponse, Message
 from finagent.llm.openai_compat import OpenAICompatClient
 from finagent.pipeline.answer import AnswerResult, answer_question
@@ -179,6 +184,70 @@ def _ask_structured(
         typer.secho(
             f"注意：第一次输出没通过校验（{result.errors[0]}），重试后才成功。", fg="yellow"
         )
+
+
+@app.command("eval")
+def eval_cmd(
+    config: Annotated[str, typer.Option(help="被评测的系统配置")] = DEFAULT_CONFIG,
+    evalset: Annotated[
+        str, typer.Option("--set", help="评测集：financebench / seed")
+    ] = "financebench",
+    split: Annotated[str, typer.Option(help="dev / test / all。test 只在里程碑跑")] = "dev",
+    prompt: Annotated[str | None, typer.Option(help="临时换 prompt，如 answer_v3")] = None,
+    limit: Annotated[int | None, typer.Option(help="只跑前 N 题（冒烟测试用）")] = None,
+    today: Annotated[
+        str | None, typer.Option(help="传给模型的日期，默认今天；复现旧结果时指定")
+    ] = None,
+    workers: Annotated[int, typer.Option(help="同时进行的请求数")] = 5,
+    yes: Annotated[bool, typer.Option("--yes", help="跳过费用确认")] = False,
+) -> None:
+    """在评测集上跑一次评测，生成不可变的记录目录（runs/eval/...）。"""
+    system = load_config(config)
+    eval_cfg = load_eval_config()
+    if system.prompt is None:
+        typer.secho("评测需要结构化输出，请用 v0.2 及以后的配置。", fg="red", err=True)
+        raise typer.Exit(2)
+    items = load_evalset(evalset, split)[:limit]
+    prompt_name = prompt or system.prompt.name
+    if split == "test":
+        typer.secho("注意：你在跑 test。不要根据 test 的结果去改系统。", fg="yellow")
+    est = estimate_cost(system, prompt_name, items, eval_cfg)
+    typer.echo(
+        f"{system.name} / {prompt_name} 在 {evalset}/{split} 上跑 {len(items)} 题，预估花费约 ${est:.3f}（往高里估）"
+    )
+    if not yes and not typer.confirm("继续？", default=False):
+        raise typer.Exit(0)
+
+    run_dir = run_eval(
+        system,
+        evalset,
+        split,
+        eval_cfg,
+        prompt_name=prompt,
+        today=today,
+        limit=limit,
+        workers=workers,
+    )
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    m, (lo, hi) = summary["metrics"], summary["accuracy_ci95"]
+    typer.echo(
+        f"\n准确率 {100 * m['accuracy']:.1f}%（95% 置信区间 {100 * lo:.1f}% ~ {100 * hi:.1f}%）  "
+        f"✅{m['correct']} ❌{m['incorrect']} 🤷{m['abstained']} 💥{m['invalid']} ⚠️{m['error']}  "
+        f"花费 ${summary['cost_usd']['total']:.4f}"
+    )
+    typer.echo(f"记录目录：{run_dir}")
+    typer.echo(f"报告：{run_dir / 'report.md'}")
+
+
+@app.command()
+def compare(
+    run_a: Annotated[Path, typer.Argument(help="第一次评测的记录目录")],
+    run_b: Annotated[Path, typer.Argument(help="第二次评测的记录目录")],
+) -> None:
+    """配对比较两次评测：准确率之差的置信区间 + McNemar 检验。"""
+    eval_cfg = load_eval_config()
+    text = compare_runs(run_a, run_b, eval_cfg.bootstrap_resamples, eval_cfg.bootstrap_seed)
+    Console().print(Markdown(text))
 
 
 @app.command()
