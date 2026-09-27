@@ -107,9 +107,10 @@ finagent/
 |-- scripts/         check_env.py [L00]  l01_compare.py [L01]（每课的实验脚本）
 |-- configs/
 |   |-- systems/     v0.1.yaml ... v1.0.yaml（每个系统版本一份）            [L01+]
+|   |-- eval.yaml    评测设置：裁判、容差、bootstrap（和系统配置分开）    [L03]
 |   '-- train/       sft_*.yaml  dpo_*.yaml                               [L11+]
 |-- prompts/         answer_v1.yaml / v2 / v3（每个版本一个文件）          [L02]
-|-- evalsets/        seed_closed_book.jsonl [L01]  finqa / financebench / multihop [L03+]
+|-- evalsets/        financebench / seed [L03]  finqa [L04]  multihop [L07]；MANIFEST、judge_calibration/
 |-- src/finagent/
 |   |-- cli.py                                                            [L01]
 |   |-- config.py    tracing.py                                           [L01]
@@ -119,6 +120,7 @@ finagent/
 |   |-- schemas.py   prompts.py（答案 schema、prompt 模板）                [L02]
 |   |-- pipeline/    answer.py                                            [L02]
 |   |-- eval/        datasets.py  metrics.py  judge.py  run.py            [L03]
+|   |-- llm/         structured.py（通用：JSON mode → 校验 → 带反馈重试）    [L03]
 |   |-- tools/       registry.py  calculator.py                           [L04]
 |   |                search_filings.py  get_metric.py                     [L07]
 |   |-- agent/       loop.py [L04]   react.py [L07]
@@ -142,7 +144,7 @@ finagent/
 | v0.0 | 骨架、环境 | 什么都做不了，但知道要去哪 |
 | v0.1 ✅ | `llm/`（base / openai_compat / pricing）、`cli.py`、`tracing.py`、`config.py` | 闭卷问答，记录成本 |
 | v0.2 ✅ | `prompts/`、`schemas.py`、`prompts.py`、`pipeline/answer.py` | 结构化答案，可自动判分 |
-| v0.3 | `eval/`、`evalsets/`、SCOREBOARD | **可度量** |
+| v0.3 ✅ | `eval/`、`evalsets/`、`llm/structured.py`、SCOREBOARD 的 test 基线 | **可度量**：置信区间、配对比较、可复现的记录目录 |
 | v0.4 | `tools/`、`agent/loop.py` | 算对数 |
 | v0.5 | `data/`、`rag/` 基础 | 有依据地回答，带引用 |
 | v0.6 | `rag/` 进阶 | 检索更准 |

@@ -14,7 +14,7 @@
 
 ## 当前状态
 
-**v0.2**：闭卷；prompt 模板 + JSON 结构化输出 + schema 校验（L02）。`finagent ask` 默认输出结构化答案，`--config configs/systems/v0.1.yaml` 可回到裸调模式
+**v0.3**：有了正式评测（L03）。`finagent eval` 在 FinanceBench 上评测并生成可复现的记录，`finagent compare` 做配对比较。闭卷基线：test 准确率 37.0%（95% 区间 27% ~ 47%），见 [SCOREBOARD.md](SCOREBOARD.md)
 
 ## 快速开始（Windows / PowerShell）
 

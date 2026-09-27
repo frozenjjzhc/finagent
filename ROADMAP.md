@@ -73,8 +73,8 @@
 
 #### L03 · Eval 驱动开发 → v0.3 ⏱ 6h ★ 全课程最重要的一课
 - **痛点**："我改了 prompt，到底有没有变好？"
-- **知识点**：golden set 构建（覆盖面、难度分层、来源：FinQA 子集 + FinanceBench 开源子集 + 自写题）· **dev / test 划分**（防止把 prompt 调到 test 上过拟合）· 指标：数值题用带容差的 exact match（相对误差 < 1%），文本题用 LLM-as-judge + rubric · judge 的偏差（位置、长度、自我偏好；被测系统和 judge 都是 DeepSeek 时要特别注意自我偏好）与人工校准 · **样本量与置信区间**（100 道题上差 3% 往往不显著，用 bootstrap 看）· 可复现（run 目录记录 config + prompt 版本 + commit）
-- **动手**：`evalsets/*.jsonl` · `eval/metrics.py` · `eval/judge.py` · `eval/run.py` → `runs/<时间戳>/{results.jsonl, summary.json}` · `finagent eval --config configs/systems/v0.2.yaml --split dev`
+- **知识点**：golden set 构建（覆盖面、难度分层、来源：FinanceBench 开源子集 + 自写题；FinQA 需要给定上下文才能作答，挪到 L04）· **dev / test 划分**（防止把 prompt 调到 test 上过拟合）· 指标：数值题用带容差的 exact match（相对误差 < 1%），文本题用 LLM-as-judge + rubric · judge 的偏差（位置、长度、自我偏好；被测系统和 judge 都是 DeepSeek 时要特别注意自我偏好）与人工校准 · **样本量与置信区间**（100 道题上差 3% 往往不显著，用 bootstrap 看）· 可复现（run 目录记录 config + prompt 版本 + commit）
+- **动手**：`evalsets/*.jsonl` · `eval/metrics.py` · `eval/judge.py` · `eval/run.py` → `runs/<时间戳>/{results.jsonl, summary.json}` · `finagent eval --set financebench --split dev` · `finagent compare`（配对 bootstrap + McNemar）
 - **实验**：定量重比 L02 的 3 个 prompt，SCOREBOARD 写入第一行 baseline。
 - 🔗 相当于 nanolm 里的 val loss，只是这里要自己定义"好"是什么。
 - 🎤 How would you evaluate an LLM system? · LLM-as-judge 可靠吗，怎么校准？ · 怎么判断一个提升是真的？
@@ -83,7 +83,7 @@
 - **痛点**：eval 显示，即使把财报原文直接给模型（oracle context），增长率、比率、CAGR 这类多步算术仍然会错。
 - **知识点**：LLM 为什么算不好数（tokenization 把数字切得很乱，L08 你会亲眼看到）· function calling 的本质：模型只输出"调用意图"（JSON），执行在你这边 · tool schema 设计（名字和描述的写法直接影响调用准确率）· **手写 tool loop**：请求 → `finish_reason=tool_calls` → 执行 → 用 `role: tool` 消息回传结果 → 再请求 · 并行调用 · 错误回传（把异常信息当作工具结果返回，让模型自己纠正）· thinking 模式下带工具时，之前各轮的 `reasoning_content` 要原样传回（DeepSeek 文档的要求）· 安全：计算器用 AST 白名单，**绝不用 `eval()`**
 - **动手**：`tools/registry.py`（装饰器从函数签名 + docstring 自动生成 schema）· `tools/calculator.py` · `agent/loop.py` · `walkthroughs/L04_tool_loop.py`
-- **实验**：FinQA 子集（给定上下文），no-tool vs calculator。控制变量：上下文完全相同，只变工具，就是你 CSCI 566 用的那套方法。
+- **实验**：先构建 FinQA 评测子集（每题附带财报片段，也就是给定上下文），再比较 no-tool vs calculator。控制变量：上下文完全相同，只变工具，就是你 CSCI 566 用的那套方法。
 - 🎤 function calling 底层怎么工作？ · 怎么设计好的 tool schema？ · 模型传了坏参数怎么办？
 
 #### L05 · RAG ① 基础管线 → v0.5 ⏱ 7h
@@ -247,7 +247,7 @@
 - [ ] L00 需求到架构（环境、git 已完成；剩：改写 PRD、写 ADR-9）
 - [x] L01 LLM API 基础（2026-09-26，v0.1）
 - [x] L02 Prompt + 结构化输出（2026-09-27，v0.2；作业为选做）
-- [ ] L03 Eval 驱动开发 ★
+- [x] L03 Eval 驱动开发 ★（2026-09-27，v0.3；test 基线 37.0%）
 - [ ] L04 Tool Use
 - [ ] L05 RAG 基础
 - [ ] L06 RAG 检索工程
