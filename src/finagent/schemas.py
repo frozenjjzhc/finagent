@@ -3,8 +3,9 @@
 模型的回答不再是一段自由文本，而是一个固定结构的 JSON，用 pydantic 校验。
 有了固定结构，程序才能自动判分（L03）、自动检查引用（L05）、自动生成训练数据（L10）。
 
-字段顺序是有意安排的：reasoning 排第一。模型按顺序生成 JSON，
-先写推理、再写数值，相当于在 JSON 里做了一次"先想后答"（chain of thought）。
+字段顺序是有意安排的：reasoning 排第一，和 prompt 里的格式说明、few-shot 示例保持一致。
+注意：模型看不到这个 Python 类，真正让它"先写推理、再写数值"的是 prompt 和示例；
+这里保持同样的顺序，是为了让 model_dump_json 的输出（--json 显示、L10 的训练数据）也是推理在前。
 """
 
 from __future__ import annotations

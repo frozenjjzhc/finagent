@@ -121,7 +121,7 @@
 
 这就是 chain of thought（CoT，思维链）有效的原因：**生成的顺序就是计算的顺序。**
 
-我们在 JSON 里用**字段顺序**来实现它：schema 和 prompt 都把 `reasoning` 放在第一个字段，模型先写推理，再写 `status` 和 `value`。
+我们在 JSON 里用**字段顺序**来实现它：prompt 的格式说明要求按顺序输出、`reasoning` 排第一，few-shot 示例也都是推理在前，模型于是先写推理，再写 `status` 和 `value`。`schemas.py` 里也是同样的顺序，但模型看不到 Python 代码，它的作用是让代码输出的 JSON（比如 L10 的训练数据）也保持推理在前。解析器不检查顺序，所以这是一个靠 prompt 实现的"软约束"：上次实验的 30 次输出全部遵守了。
 
 **和 thinking 模式的区别：**
 
