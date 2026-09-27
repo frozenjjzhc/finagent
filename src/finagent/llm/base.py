@@ -6,14 +6,14 @@
      DeepSeek、vLLM、Ollama 和 HF 的 apply_chat_template 都认这个格式，所以不自己发明。
   2. 所有后端都返回同一个 LLMResponse，上层（CLI、eval、agent）只认它。
 
-L01 只有纯文本对话；L04 会在这里加上 tool_calls。
+L01 只有纯文本对话；L04 加上了工具调用（ToolCall、LLMResponse.tool_calls、chat 的 tools 参数）。
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
-from typing import Literal, Protocol
+from dataclasses import asdict, dataclass, field
+from typing import Any, Literal, Protocol
 
 Message = dict[str, object]
 
@@ -36,6 +36,28 @@ class Usage:
 
 
 @dataclass
+class ToolCall:
+    """模型发出的一次工具调用请求（L04）。
+
+    注意：模型只是"说"它想调用哪个函数、传什么参数，真正执行函数的是我们自己的代码。
+    """
+
+    id: str  # 调用编号。回传结果时，role=tool 的消息要用 tool_call_id 对上这个编号
+    name: str  # 函数名
+    arguments: str  # 参数：模型生成的 JSON **字符串**，不是 dict。可能不合法，要自己解析和校验
+
+
+@dataclass
+class ToolStep:
+    """工具循环里的一步：模型请求的调用，加上我们执行之后回传给它的结果（L04）。"""
+
+    call: ToolCall
+    result: str  # 回传给模型的文字；出错时以 "Error:" 开头
+    ok: bool  # 执行是否成功
+    latency_s: float = 0.0
+
+
+@dataclass
 class LLMResponse:
     content: str  # 正式回答
     finish_reason: str  # 为什么停下：stop / length / content_filter / tool_calls / ...
@@ -45,6 +67,28 @@ class LLMResponse:
     cost_usd: float | None = None  # 按 pricing.py 算出的花费；不认识的模型为 None
     reasoning: str | None = None  # thinking 模式下的思考过程（reasoning_content）
     ttft_s: float | None = None  # 首 token 延迟（time to first token），只有流式调用才有
+    tool_calls: list[ToolCall] = field(default_factory=list)  # 模型要求调用的工具（L04）
+
+    def to_message(self) -> Message:
+        """把这次回复变成一条 assistant 消息，追加到 messages 里，下一轮原样发回去。
+
+        工具循环必须这样做：模型要看到"自己刚才请求了哪些调用"，才能理解后面的 role=tool 消息。
+        thinking 模式下还要带上 reasoning_content：DeepSeek 文档要求，带 tools 的请求
+        必须把之前的 reasoning_content 完整传回（否则可能返回 400）。
+        """
+        message: Message = {"role": "assistant", "content": self.content}
+        if self.reasoning is not None:
+            message["reasoning_content"] = self.reasoning
+        if self.tool_calls:
+            message["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.name, "arguments": tc.arguments},
+                }
+                for tc in self.tool_calls
+            ]
+        return message
 
 
 class LLMClient(Protocol):
@@ -55,6 +99,7 @@ class LLMClient(Protocol):
         messages: list[Message],
         on_delta: DeltaCallback | None = None,
         json_mode: bool = False,
+        tools: list[dict[str, Any]] | None = None,
     ) -> LLMResponse:
         """发送一轮对话。
 
@@ -62,5 +107,7 @@ class LLMClient(Protocol):
         on_delta 不为 None：走流式，每收到一个片段就调用一次 on_delta，
         最后仍然返回完整的 LLMResponse（包括 usage 和 cost）。
         json_mode 为 True：要求模型只输出一个合法的 JSON 对象（L02）。
+        tools：可供模型调用的工具（OpenAI 格式的 schema 列表，L04）。模型想调用时，
+        返回的 finish_reason 是 "tool_calls"，要调用的内容在 LLMResponse.tool_calls 里。
         """
         ...

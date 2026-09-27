@@ -21,12 +21,18 @@ from rich.markdown import Markdown
 from rich.table import Table
 
 from finagent import tracing
-from finagent.config import LLMConfig, PromptConfig, load_config, load_eval_config, with_overrides
+from finagent.config import (
+    LLMConfig,
+    SystemConfig,
+    load_config,
+    load_eval_config,
+    with_overrides,
+)
 from finagent.eval.datasets import load_evalset
-from finagent.eval.run import compare_runs, estimate_cost, run_eval
+from finagent.eval.run import check_prompt_fits, compare_runs, estimate_cost, run_eval
 from finagent.llm.base import LLMResponse, Message
 from finagent.llm.openai_compat import OpenAICompatClient
-from finagent.pipeline.answer import AnswerResult, answer_question
+from finagent.pipeline.answer import AnswerResult, answer_question, tool_options
 from finagent.prompts import load_prompt
 from finagent.schemas import format_value
 
@@ -34,7 +40,8 @@ app = typer.Typer(
     help="FinAgent：美股财报问答助手（学习项目）", no_args_is_help=True, add_completion=False
 )
 
-DEFAULT_CONFIG = "configs/systems/v0.2.yaml"  # 默认用最新版本；旧版本用 --config 指定
+# 默认用最新的闭卷版本。v0.4 起的系统需要上下文（--context-file），不适合当默认
+DEFAULT_CONFIG = "configs/systems/v0.3.yaml"
 
 STATUS_LABELS = {"answered": "已回答", "unknown": "不知道", "invalid_premise": "前提不成立"}
 CONFIDENCE_LABELS = {"high": "高", "medium": "中", "low": "低"}
@@ -76,6 +83,10 @@ def ask(
     show_json: Annotated[
         bool, typer.Option("--json", help="结构化模式下，直接打印校验通过的 JSON")
     ] = False,
+    context_file: Annotated[
+        Path | None,
+        typer.Option(help="财报片段文本文件，作为上下文（v0.4 起的开卷系统需要）"),
+    ] = None,
 ) -> None:
     """问一个问题。配置里有 prompt（v0.2 起）就输出结构化答案；没有（v0.1）就是裸调。"""
     system = load_config(config)
@@ -103,7 +114,8 @@ def ask(
                 err=True,
             )
             raise typer.Exit(2)
-        _ask_structured(client, llm_cfg, system.prompt, question, show_json, show_reasoning)
+        context = context_file.read_text(encoding="utf-8") if context_file else None
+        _ask_structured(client, llm_cfg, system, question, context, show_json, show_reasoning)
 
 
 def _ask_raw(
@@ -136,21 +148,45 @@ def _ask_raw(
 def _ask_structured(
     client: OpenAICompatClient,
     llm_cfg: LLMConfig,
-    prompt_cfg: PromptConfig,
+    system: SystemConfig,
     question: str,
+    context: str | None,
     show_json: bool,
     show_reasoning: bool,
 ) -> None:
     """结构化模式（v0.2 起）：套用 prompt 模板，要求 JSON 输出，校验后按字段打印。
 
-    JSON 要完整收到才能解析，所以这里不走流式。
+    JSON 要完整收到才能解析，所以这里不走流式。系统配置里有工具时（v0.4 起），走工具循环。
     """
-    prompt = load_prompt(prompt_cfg.name)
+    assert system.prompt is not None
+    prompt = load_prompt(system.prompt.name)
+    if "context" in prompt.variables and context is None:
+        typer.secho(
+            f"prompt {prompt.name} 需要上下文：用 --context-file 指定一个财报片段文本文件",
+            fg="red",
+            err=True,
+        )
+        raise typer.Exit(2)
     try:
-        result = answer_question(client, prompt, question, max_attempts=prompt_cfg.max_attempts)
-    except openai.OpenAIError as e:
-        typer.secho(_explain_error(e), fg="red", err=True)
+        result = answer_question(
+            client,
+            prompt,
+            question,
+            max_attempts=system.prompt.max_attempts,
+            context=context,
+            **tool_options(system.tools),
+        )
+    except (openai.OpenAIError, ValueError) as e:
+        message = _explain_error(e) if isinstance(e, openai.OpenAIError) else str(e)
+        typer.secho(message, fg="red", err=True)
         raise typer.Exit(1) from None
+
+    for step in result.tool_steps:  # 工具调用的过程：模型请求了什么，我们返回了什么
+        args = step.call.arguments
+        typer.secho(
+            f"[工具] {step.call.name}({args}) → {step.result}",
+            fg="cyan" if step.ok else "yellow",
+        )
 
     if show_reasoning:
         for r in result.responses:
@@ -182,7 +218,7 @@ def _ask_structured(
     typer.secho(_structured_footer(llm_cfg, prompt.name, result), fg="bright_black")
     if result.attempts > 1:
         typer.secho(
-            f"注意：第一次输出没通过校验（{result.errors[0]}），重试后才成功。", fg="yellow"
+            f"注意：第一次尝试没有成功（{result.errors[0]}），重试后才成功。", fg="yellow"
         )
 
 
@@ -190,7 +226,7 @@ def _ask_structured(
 def eval_cmd(
     config: Annotated[str, typer.Option(help="被评测的系统配置")] = DEFAULT_CONFIG,
     evalset: Annotated[
-        str, typer.Option("--set", help="评测集：financebench / seed")
+        str, typer.Option("--set", help="评测集：financebench / seed / finqa")
     ] = "financebench",
     split: Annotated[str, typer.Option(help="dev / test / all。test 只在里程碑跑")] = "dev",
     prompt: Annotated[str | None, typer.Option(help="临时换 prompt，如 answer_v3")] = None,
@@ -209,6 +245,11 @@ def eval_cmd(
         raise typer.Exit(2)
     items = load_evalset(evalset, split)[:limit]
     prompt_name = prompt or system.prompt.name
+    try:
+        check_prompt_fits(prompt_name, items)
+    except ValueError as e:
+        typer.secho(str(e), fg="red", err=True)
+        raise typer.Exit(2) from None
     if split == "test":
         typer.secho("注意：你在跑 test。不要根据 test 的结果去改系统。", fg="yellow")
     est = estimate_cost(system, prompt_name, items, eval_cfg)
@@ -343,7 +384,8 @@ def _structured_footer(cfg: LLMConfig, prompt_name: str, result: AnswerResult) -
     cost = "未知" if result.cost_usd is None else f"${result.cost_usd:.6f}"
     return (
         f"[{cfg.model} | thinking={'on' if cfg.thinking else 'off'} | prompt={prompt_name} | "
-        f"尝试 {result.attempts} 次 | 输入 {prompt_tokens}（缓存命中 {cache_hit}） · 输出 {completion} | "
+        f"尝试 {result.attempts} 次、调用模型 {len(rs)} 次、工具 {len(result.tool_steps)} 次 | "
+        f"输入 {prompt_tokens}（缓存命中 {cache_hit}） · 输出 {completion} | "
         f"{cost} | {result.latency_s:.1f}s]"
     )
 

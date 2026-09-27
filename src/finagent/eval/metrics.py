@@ -72,6 +72,12 @@ def grade_number(item: EvalItem, answer: Answer, relative: float = 0.01) -> Grad
     tol = allowed_error(item, relative)
     if any(abs(c - gold) <= tol for c in candidates):
         return Grade("correct", "rule", f"误差在 ±{tol:g} 以内")
+    if gold != 0 and any(abs(c + gold) <= tol for c in candidates):
+        # 数值对、符号反了。题目问"下降了多少"时，答 42（下降 42）和 -42（变化 -42）都对；
+        # 题目没说方向时（"变化了多少"），符号本身就是答案的一部分，答反了算错
+        if item.sign_agnostic:
+            return Grade("correct", "rule", f"数值在 ±{tol:g} 以内（题目已说明方向，不看符号）")
+        return Grade("incorrect", "rule", "符号反了", "sign_error")
     for factor in (1000, 1 / 1000, 100, 1 / 100):
         if abs(value * factor - gold) <= tol:
             return Grade("incorrect", "rule", f"数量级错了（差 {1 / factor:g} 倍）", "scale_error")

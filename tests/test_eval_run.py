@@ -2,11 +2,13 @@
 
 import json
 
+import pytest
+
 from finagent.config import EvalConfig, JudgeConfig, LLMConfig, load_config
 from finagent.eval.datasets import EvalItem
 from finagent.eval.judge import Judge, candidate_text
 from finagent.eval.run import compare_runs, run_eval
-from finagent.llm.base import LLMResponse, Usage
+from finagent.llm.base import LLMResponse, ToolCall, Usage
 from finagent.prompts import load_prompt
 from finagent.schemas import Answer
 
@@ -98,3 +100,49 @@ def test_run_eval_writes_a_complete_record(tmp_path) -> None:
         make_client=FakeClient,
     )
     assert "不显著" in compare_runs(run_dir, run_b, resamples=200)
+
+
+class ToolFakeClient:
+    """带工具的假系统（L04）：第一轮请求计算器，拿到结果后把它当作答案。裁判不会被用到。"""
+
+    def __init__(self, cfg, tag: str = "") -> None:
+        pass
+
+    def chat(self, messages, on_delta=None, json_mode=False, tools=None) -> LLMResponse:
+        last = messages[-1]
+        if tools and last["role"] != "tool":
+            call = ToolCall("call_0", "calculate", json.dumps({"expression": "(110 - 100) / 100"}))
+            return LLMResponse("", "tool_calls", "fake", Usage(), 0.01, 0.001, tool_calls=[call])
+        content = json.dumps(
+            {"reasoning": "r", "status": "answered", "value": float(last["content"]),
+             "unit": "other", "answer_text": "t", "sources": [], "confidence": "high"}
+        )  # fmt: skip
+        return LLMResponse(content, "stop", "fake", Usage(), 0.01, 0.001)
+
+
+def test_run_eval_with_tools_and_context(tmp_path) -> None:
+    system = load_config("configs/systems/v0.4.yaml")
+    run_dir = run_eval(
+        system,
+        "finqa",
+        "dev",
+        EVAL_CFG,
+        limit=3,
+        out_root=tmp_path,
+        make_client=ToolFakeClient,
+    )
+    rows = [json.loads(line) for line in (run_dir / "results.jsonl").read_text("utf-8").splitlines()]
+    assert all(r["llm_calls"] == 2 and r["attempts"] == 1 for r in rows)
+    assert rows[0]["tool_calls"][0]["result"] == "0.1"
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["tools"]["used_rate"] == 1.0 and summary["tools"]["mean_llm_calls"] == 2.0
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    assert meta["tools"] == ["calculate"]
+    assert "工具（calculate）" in (run_dir / "report.md").read_text(encoding="utf-8")
+
+
+def test_prompt_must_fit_the_evalset(tmp_path) -> None:
+    # FinQA 带上下文，闭卷 prompt 没有 {{context}}：上下文会被悄悄丢掉，所以在花钱之前就报错
+    system = load_config("configs/systems/v0.3.yaml")
+    with pytest.raises(ValueError, match="context"):
+        run_eval(system, "finqa", "dev", EVAL_CFG, limit=1, out_root=tmp_path)

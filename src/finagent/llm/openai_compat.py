@@ -6,6 +6,8 @@ L15：同一个类，把 base_url 换成本地 vLLM / Ollama 的地址即可。
 DeepSeek 在标准 OpenAI 格式之外的扩展，都集中在这个文件里处理（也就是 ADR-1 说的"漏"）：
   - 请求：thinking 开关放在 extra_body={"thinking": {...}}
   - 响应：思考过程在 message.reasoning_content；缓存用量在 usage.prompt_cache_hit/miss_tokens
+  - 工具（L04）：thinking 模式下，带 tools 的请求要把之前的 reasoning_content 传回
+    （由 LLMResponse.to_message 负责）；tool_choice 不支持 required 和指定函数
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from openai import OpenAI
 
 from finagent import tracing
 from finagent.config import LLMConfig
-from finagent.llm.base import DeltaCallback, LLMResponse, Message, Usage
+from finagent.llm.base import DeltaCallback, LLMResponse, Message, ToolCall, Usage
 from finagent.llm.pricing import cost_usd, is_peak
 
 
@@ -45,8 +47,12 @@ class OpenAICompatClient:
         messages: list[Message],
         on_delta: DeltaCallback | None = None,
         json_mode: bool = False,
+        tools: list[dict[str, Any]] | None = None,
     ) -> LLMResponse:
-        request = self._build_request(messages, json_mode)
+        if tools and on_delta is not None:
+            # 流式时，工具参数是一小段一小段到达的，要按 index 拼接，本项目的工具循环用不到，先不支持
+            raise ValueError("带工具的调用暂不支持流式输出")
+        request = self._build_request(messages, json_mode, tools)
         started_at = datetime.now(timezone.utc)
         t0 = time.perf_counter()  # 测耗时用 perf_counter（单调时钟），不用 time.time()
         try:
@@ -55,15 +61,20 @@ class OpenAICompatClient:
             else:
                 resp = self._call_stream(request, t0, on_delta)
         except openai.OpenAIError as e:
-            self._log(messages, started_at, json_mode=json_mode, error=e)  # 失败的调用也要记下来
+            self._log(messages, started_at, json_mode, tools, error=e)  # 失败的调用也要记下来
             raise
         resp.cost_usd = cost_usd(self.cfg.model, resp.usage, started_at)
-        self._log(messages, started_at, json_mode=json_mode, resp=resp, stream=on_delta is not None)
+        self._log(messages, started_at, json_mode, tools, resp=resp, stream=on_delta is not None)
         return resp
 
     # ------------------------------------------------------------------ 请求
 
-    def _build_request(self, messages: list[Message], json_mode: bool = False) -> dict[str, Any]:
+    def _build_request(
+        self,
+        messages: list[Message],
+        json_mode: bool = False,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         request: dict[str, Any] = {
             "model": self.cfg.model,
             "messages": messages,
@@ -82,6 +93,11 @@ class OpenAICompatClient:
             # JSON mode：只保证输出是合法 JSON，不保证符合我们的 schema。
             # DeepSeek 还要求 prompt 里出现 "json" 这个词，并给出格式示例。
             request["response_format"] = {"type": "json_object"}
+        if tools:
+            # 工具的 schema 和 system prompt 一样，每次请求都要完整发送（API 是无状态的），
+            # 也一样占输入 token；好在它每次都相同，能命中前缀缓存。
+            # tool_choice 不传，默认 "auto"：由模型自己决定调不调用。
+            request["tools"] = tools
         return request
 
     # ------------------------------------------------------------------ 非流式
@@ -98,6 +114,7 @@ class OpenAICompatClient:
             model=completion.model,
             usage=parse_usage(completion.usage),
             latency_s=latency,
+            tool_calls=parse_tool_calls(choice.message.tool_calls),
         )
 
     # ------------------------------------------------------------------ 流式
@@ -152,6 +169,7 @@ class OpenAICompatClient:
         messages: list[Message],
         started_at: datetime,
         json_mode: bool = False,
+        tools: list[dict[str, Any]] | None = None,
         resp: LLMResponse | None = None,
         stream: bool = False,
         error: Exception | None = None,
@@ -166,6 +184,7 @@ class OpenAICompatClient:
             "json_mode": json_mode,
             "peak": is_peak(started_at),
             "stream": stream,
+            "tools": [t["function"]["name"] for t in tools or []],  # 只记工具名，schema 太长
             "messages": messages,
         }
         if error is not None:
@@ -182,12 +201,24 @@ class OpenAICompatClient:
                 content=resp.content,
                 reasoning=resp.reasoning,
                 finish_reason=resp.finish_reason,
+                tool_calls=[
+                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                    for tc in resp.tool_calls
+                ],
                 usage=resp.usage.to_dict(),
                 cost_usd=resp.cost_usd,
                 latency_s=round(resp.latency_s, 3),
                 ttft_s=None if resp.ttft_s is None else round(resp.ttft_s, 3),
             )
         tracing.log_call(record)
+
+
+def parse_tool_calls(raw: Any) -> list[ToolCall]:
+    """把 SDK 的 tool_calls 转成我们自己的 ToolCall。没有调用时 SDK 给的是 None。"""
+    return [
+        ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments or "")
+        for tc in raw or []
+    ]
 
 
 def parse_usage(u: Any) -> Usage:

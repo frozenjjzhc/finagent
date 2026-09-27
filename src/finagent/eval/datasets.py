@@ -28,7 +28,7 @@ class EvalItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
-    source: Literal["seed", "financebench"]
+    source: Literal["seed", "financebench", "finqa"]
     split: Split  # dev：调 prompt、做实验时用；test：只在里程碑跑，防止对它过拟合
     question: str
     answer_type: AnswerType  # number：程序判分；text：LLM 裁判判分；invalid_premise：陷阱题
@@ -43,6 +43,10 @@ class EvalItem(BaseModel):
     doc_type: str = ""  # 10k / 10q / 8k / Earnings
     justification: str = ""  # 标准答案的推导说明（给裁判参考）
     evidence: list[dict] = Field(default_factory=list)  # 证据所在的文档和页码，L05 评测检索时用
+    # 给定的上下文（L04，FinQA）：财报一页的文字 + 表格。有它的题是"开卷"题，prompt 必须有 {{context}}
+    context: str | None = None
+    # 题目自己说明了方向（"下降了多少"），答 42 和 -42 都算对。见 metrics.grade_number（L04）
+    sign_agnostic: bool = False
 
     @model_validator(mode="after")
     def _number_needs_value(self) -> EvalItem:
@@ -99,10 +103,58 @@ def parse_gold_number(answer: str, question: str) -> tuple[float, Unit, int] | N
     return value, "other", decimals
 
 
+_FINQA_NUMBER = re.compile(
+    r"^\s*(?P<neg>-)?\s*\$?\s*(?P<num>\d[\d,]*(?:\.(?P<dec>\d+))?|\.(?P<dec2>\d+))\s*(?P<pct>%)?\s*$"
+)
+
+
+def parse_finqa_gold(answer: str, exe_ans: object) -> tuple[float, Unit, int] | None:
+    """FinQA 的标准答案有两份：answer（人写的文字，如 "1.6%"）和 exe_ans（程序算出的数，如 0.01641）。
+
+    只有两份**对得上**的题才保留，返回（数值, 单位, 小数位数）；对不上就返回 None，丢掉这道题。
+    这是一种便宜的标注质量检查：两个独立来源一致，标准答案出错的可能性就小得多。
+      - "1.6%" 且 exe_ans = 0.01641  → 对得上（×100）→ (1.641, percent, 1)
+      - "24.69%" 且 exe_ans = 24.69   → 对得上（程序里已经 ×100）→ (24.69, percent, 2)
+      - "127.40" 且 exe_ans = 127.4   → (127.4, other, 2)
+      - "3.4%" 且 exe_ans = -0.0339   → 符号对不上 → None
+      - "yes" / exe_ans = "yes"       → 不是数值题 → None
+    数值用 exe_ans（更精确），小数位数用 answer（它决定容差，见 metrics.allowed_error）。
+    """
+    if isinstance(exe_ans, bool) or not isinstance(exe_ans, (int, float)):
+        return None
+    m = _FINQA_NUMBER.match(answer)
+    if not m:
+        return None
+    value = float(m.group("num").replace(",", "")) if m.group("num") else float("." + m.group("dec2"))
+    if m.group("neg"):
+        value = -value
+    decimals = len(m.group("dec") or m.group("dec2") or "")
+    tol = max(0.01 * abs(value), 0.5 * 10**-decimals)
+    exe = float(exe_ans)
+    if m.group("pct"):
+        for candidate in (exe * 100, exe):  # 程序可能算的是比率，也可能已经乘过 100
+            if abs(candidate - value) <= tol:
+                return candidate, "percent", decimals
+        return None
+    return (exe, "other", decimals) if abs(exe - value) <= tol else None
+
+
 def _digits_of(scale: float) -> int:
     """1000 → 3，1 → 0，0.001 → -3：换算后小数位数要减去的量。"""
     return {1000.0: 3, 1.0: 0, 0.001: -3}[scale]
 
 
+# L04 新增的字段。取默认值时不写进文件：这样 L03 的评测集文件逐字节不变，
+# 旧记录里的 dataset_sha256 仍然对得上，新旧结果还能直接比较
+_ADDED_FIELDS = {"context": None, "sign_agnostic": False}
+
+
 def dump_items(items: list[EvalItem]) -> str:
-    return "".join(json.dumps(it.model_dump(), ensure_ascii=False) + "\n" for it in items)
+    lines = []
+    for it in items:
+        data = it.model_dump()
+        for name, default in _ADDED_FIELDS.items():
+            if data[name] == default:
+                del data[name]
+        lines.append(json.dumps(data, ensure_ascii=False) + "\n")
+    return "".join(lines)

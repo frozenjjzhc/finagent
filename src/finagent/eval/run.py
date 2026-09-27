@@ -44,7 +44,7 @@ from finagent.eval.metrics import (
 from finagent.llm.base import LLMClient
 from finagent.llm.openai_compat import OpenAICompatClient
 from finagent.llm.pricing import PEAK_PRICES, is_peak
-from finagent.pipeline.answer import AnswerResult, answer_question, today_iso
+from finagent.pipeline.answer import AnswerResult, answer_question, today_iso, tool_options
 from finagent.prompts import PROMPTS_DIR, load_prompt
 from finagent.schemas import Answer, format_value
 
@@ -79,18 +79,35 @@ def file_sha256(path: Path) -> str:
 def estimate_cost(
     system: SystemConfig, prompt_name: str, items: list[EvalItem], eval_cfg: EvalConfig
 ) -> float:
-    """花钱之前先估算（往高里估）：系统每题约 300 个输出 token；文字题再加一次裁判调用。"""
+    """花钱之前先估算（往高里估）：系统每题约 300 个输出 token；文字题再加一次裁判调用。
+
+    L04：带上下文的题，输入要加上上下文的长度；带工具时，每题按 3 次调用算
+    （每一轮都要把完整的历史重新发一遍，输入 token 随轮数成倍增加）。
+    """
     discount = 1.0 if is_peak(local_now()) else 0.5
     prompt = load_prompt(prompt_name)
     chars = sum(
-        len(str(m["content"])) for m in prompt.build_messages("x" * 200, today="2026-01-01")
+        len(str(m["content"]))
+        for m in prompt.build_messages("x" * 200, today="2026-01-01", context="")
     )
+    context_chars = sum(len(it.context or "") for it in items) / max(len(items), 1)
+    calls = 3 if system.tools and system.tools.enabled else 1
     _, s_miss, s_out = PEAK_PRICES.get(system.llm.model, (0, 1.32, 3.96))
     _, j_miss, j_out = PEAK_PRICES.get(eval_cfg.judge.llm.model, (0, 1.32, 3.96))
-    per_item = chars / 3.3 * s_miss + 300 * s_out
+    per_item = calls * ((chars + context_chars) / 3.3 * s_miss + 300 * s_out)
     per_judge = 1500 / 3.3 * j_miss + 150 * j_out
     n_text = sum(1 for it in items if it.answer_type == "text")
     return discount * (len(items) * per_item + n_text * per_judge) / 1_000_000
+
+
+def check_prompt_fits(prompt_name: str, items: list[EvalItem]) -> None:
+    """评测集带上下文时，prompt 必须有 {{context}}；反过来也一样。不匹配就在花钱之前报错。"""
+    uses_context = "context" in load_prompt(prompt_name).variables
+    has_context = any(it.context is not None for it in items)
+    if has_context and not uses_context:
+        raise ValueError(f"这个评测集带上下文，但 prompt {prompt_name} 没有 {{{{context}}}}")
+    if uses_context and not all(it.context is not None for it in items):
+        raise ValueError(f"prompt {prompt_name} 需要上下文，但评测集里有题目没有上下文")
 
 
 def run_eval(
@@ -112,7 +129,9 @@ def run_eval(
     prompt_name = prompt_name or system.prompt.name
     prompt = load_prompt(prompt_name)
     items = load_evalset(set_name, split)[:limit]
+    check_prompt_fits(prompt_name, items)
     today = today or today_iso()  # 整次评测用同一个日期，并记录下来，保证可复现
+    tool_kwargs = tool_options(system.tools)  # 没有工具时是空 dict
 
     started, t0 = local_now(), time.perf_counter()
     run_dir = out_root / f"{started:%Y%m%d-%H%M%S}_{system.name}_{prompt_name}_{set_name}-{split}"
@@ -132,6 +151,8 @@ def run_eval(
                 item.question,
                 today=today,
                 max_attempts=system.prompt.max_attempts,
+                context=item.context,
+                **tool_kwargs,
             )
         except openai.OpenAIError as e:  # 一道题出错不影响其他题
             return item, None, Grade("error", "none", f"API 错误：{type(e).__name__}", "api_error")
@@ -168,6 +189,7 @@ def run_eval(
         "evalset": set_name,
         "split": split,
         "n_items": len(items),
+        "tools": tool_kwargs["tools"].names if tool_kwargs else [],
         "dataset_sha256": file_sha256(dataset),
         "today": today,
         "started_at": started.isoformat(),
@@ -204,6 +226,13 @@ def _row(item: EvalItem, res: AnswerResult | None, grade: Grade) -> dict:
         "detail": grade.detail,
         "tag": grade.tag,
         "attempts": res.attempts if res else 0,
+        "llm_calls": len(res.responses) if res else 0,
+        "tool_calls": [
+            {"name": s.call.name, "arguments": s.call.arguments, "result": s.result, "ok": s.ok}
+            for s in res.tool_steps
+        ]
+        if res
+        else [],
         "errors": res.errors if res else [],
         "raw_outputs": [r.content for r in res.responses] if res else [],
         "cost_usd": res.cost_usd if res else None,
@@ -234,6 +263,21 @@ def build_summary(rows: list[dict], judge: Judge, eval_cfg: EvalConfig) -> dict:
         "judge_calls": judge.calls,
         "latency_s": {"p50": percentile(latencies, 0.5), "p95": percentile(latencies, 0.95)},
         "mean_attempts": sum(r["attempts"] for r in rows) / len(rows) if rows else 0.0,
+        "tools": tool_stats(rows),
+    }
+
+
+def tool_stats(rows: list[dict]) -> dict:
+    """工具使用情况（L04）：用了多少、错了多少、多花了几次调用。不带工具的评测里全是 0。"""
+    n = len(rows) or 1
+    calls = [len(r.get("tool_calls", [])) for r in rows]
+    failed = sum(1 for r in rows for c in r.get("tool_calls", []) if not c["ok"])
+    total = sum(calls)
+    return {
+        "used_rate": sum(1 for c in calls if c) / n,  # 至少调用了一次工具的题目比例
+        "mean_tool_calls": total / n,
+        "failed_rate": failed / total if total else 0.0,  # 工具调用中出错（回传了 Error）的比例
+        "mean_llm_calls": sum(r.get("llm_calls", r["attempts"]) for r in rows) / n,
     }
 
 
@@ -299,6 +343,15 @@ def render_report(meta: dict, s: dict, rows: list[dict]) -> str:
         f"- 花费：系统 ${cost['system']:.4f} + 裁判 ${cost['judge']:.4f} = ${cost['total']:.4f}",
         f"- 判分方式：{s['by_grader']}；裁判调用 {s['judge_calls']} 次",
         f"- 延迟：P50 {s['latency_s']['p50']:.1f}s，P95 {s['latency_s']['p95']:.1f}s；平均尝试 {s['mean_attempts']:.2f} 次",
+    ]
+    if meta.get("tools"):
+        t = s["tools"]
+        out.append(
+            f"- 工具（{', '.join(meta['tools'])}）：{_pct(t['used_rate'])} 的题用了工具；"
+            f"平均每题调用工具 {t['mean_tool_calls']:.2f} 次、调用模型 {t['mean_llm_calls']:.2f} 次；"
+            f"工具调用出错 {_pct(t['failed_rate'])}"
+        )
+    out += [
         "",
         "## 逐题结果",
         "",
@@ -374,6 +427,20 @@ def compare_runs(dir_a: Path, dir_b: Path, resamples: int = 2000, seed: int = 0)
     out += [
         "",
         '判断标准：配对置信区间不包含 0，**并且** McNemar p < 0.05，才算显著；两种方法结论不一致时标为"边缘"。',
+        "",
+        "| 成本与调用（共同题目） | A | B |",
+        "|---|---|---|",
+    ]
+    # 提升不是免费的：工具要多调用几次模型，花费和延迟都会上去，要和准确率放在一起看（L04）
+    for label, key in (("每题花费", "cost_usd"), ("每题延迟", "latency_s"), ("每题调用模型", "llm_calls")):
+        # L03 的记录里没有 llm_calls：那时一次尝试就是一次调用，用 attempts 代替
+        va = [a[i].get(key, a[i]["attempts"] if key == "llm_calls" else None) or 0 for i in ids]
+        vb = [b[i].get(key, b[i]["attempts"] if key == "llm_calls" else None) or 0 for i in ids]
+        fmt = {"cost_usd": "${:.5f}", "latency_s": "{:.1f}s", "llm_calls": "{:.2f} 次"}[key]
+        out.append(
+            f"| {label} | {fmt.format(sum(va) / len(ids))} | {fmt.format(sum(vb) / len(ids))} |"
+        )
+    out += [
         "",
         "## 结果不同的题",
         "",

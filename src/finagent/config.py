@@ -54,8 +54,20 @@ class PromptConfig(BaseModel):
     max_attempts: int = Field(default=2, ge=1)  # 输出校验失败时最多尝试几次（含第一次）
 
 
+class ToolsConfig(BaseModel):
+    """模型可以调用哪些工具（L04）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: list[str] = Field(default_factory=list)  # 工具名，见 tools/__init__.py 的 AVAILABLE_TOOLS
+    max_rounds: int = Field(default=6, ge=1)  # 每次尝试最多几轮工具调用，防止模型一直调用下去
+    # 工具循环里要不要开 JSON mode。默认关：L04 实测开着 JSON mode 时模型几乎不调用工具
+    # （FinQA dev 8 道多步题：开 2/8，关 6/8）。关掉后 JSON 格式靠 prompt + pydantic 校验 + 重试把关
+    json_mode: bool = False
+
+
 class SystemConfig(BaseModel):
-    """一个完整的系统版本。L01 只有 llm；L02 加上 prompt；后面还会加 retrieval、tools。"""
+    """一个完整的系统版本。L01 只有 llm；L02 加上 prompt；L04 加上 tools；后面还会加 retrieval。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -63,6 +75,7 @@ class SystemConfig(BaseModel):
     description: str = ""
     llm: LLMConfig = Field(default_factory=LLMConfig)
     prompt: PromptConfig | None = None  # None = 裸调模式（v0.1）：没有模板，也不要求结构化输出
+    tools: ToolsConfig | None = None  # None = 不带工具（v0.3 及以前）
 
 
 class JudgeConfig(BaseModel):

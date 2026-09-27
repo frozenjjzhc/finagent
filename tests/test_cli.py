@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 
 from finagent import cli
 from finagent.cli import build_messages
-from finagent.llm.base import LLMResponse, Usage
+from finagent.llm.base import LLMResponse, ToolCall, Usage
 
 V01 = "configs/systems/v0.1.yaml"
 
@@ -89,7 +89,7 @@ GOOD = {
 
 def test_structured_mode_prints_the_answer(fake) -> None:
     fake.reply = json.dumps(GOOD)
-    result = run("What was NVIDIA's total revenue for fiscal year 2025?")  # 默认配置就是 v0.2
+    result = run("What was NVIDIA's total revenue for fiscal year 2025?")  # 默认配置是 v0.3（闭卷）
     assert result.exit_code == 0, result.output
     assert "$130,497 million" in result.output
     assert "已回答" in result.output
@@ -113,3 +113,35 @@ def test_structured_mode_reports_failure(fake) -> None:
     result = run("Q?")
     assert result.exit_code == 1
     assert "次尝试都没有得到合格的结构化答案" in result.output
+
+
+# ---------------------------------------------------------------- v0.4：上下文 + 工具（L04）
+
+V04 = "configs/systems/v0.4.yaml"
+
+
+class ToolFakeClient(FakeClient):
+    """第一轮请求计算器，第二轮给出 GOOD 答案。"""
+
+    def chat(self, messages, on_delta=None, json_mode=False, tools=None) -> LLMResponse:
+        FakeClient.last_messages = messages
+        if messages[-1]["role"] != "tool":
+            call = ToolCall("call_0", "calculate", json.dumps({"expression": "5,829 - 5,735"}))
+            return LLMResponse("", "tool_calls", "fake", Usage(), 0.0, tool_calls=[call])
+        return LLMResponse(json.dumps(GOOD), "stop", "fake", Usage(), 0.0)
+
+
+def test_context_prompt_requires_context_file(fake) -> None:
+    result = run("Growth?", "--config", V04)
+    assert result.exit_code == 2 and "--context-file" in result.output
+
+
+def test_tools_trace_is_printed(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(cli, "OpenAICompatClient", ToolFakeClient)
+    ctx = tmp_path / "ctx.txt"
+    ctx.write_text("revenue | 5829 | 5735", encoding="utf-8")
+    result = run("Growth?", "--config", V04, "--context-file", str(ctx))
+    assert result.exit_code == 0, result.output
+    assert "revenue | 5829 | 5735" in FakeClient.last_messages[1]["content"]  # 上下文进了 prompt
+    assert "[工具] calculate" in result.output and "thousands separators" in result.output
+    assert "工具 1 次" in result.output

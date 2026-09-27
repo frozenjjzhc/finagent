@@ -1,0 +1,28 @@
+# L04 消融：和 v0.4.yaml 只差一处，工具循环里开着 JSON mode（json_mode: true）。
+# 用来检验"开着 JSON mode 时模型不愿意调用工具"这个发现在整个 dev 上是否成立。
+# （下面是 v0.4.yaml 原来的说明）
+# 新增两样东西：
+#   1. 计算器工具 calculate：模型把算式交给我们执行，不再心算（AST 白名单，见 tools/calculator.py）
+#   2. 开卷 prompt answer_ctx_tools_v1：只根据给定的财报片段回答，并要求每一步计算都用计算器
+# 所以这个系统**需要上下文**：评测用 FinQA（每题带一页财报），
+# 手动提问用 finagent ask --context-file。它就是 L05 RAG 里的"阅读器"：L05 起片段改由检索提供。
+# 对照组是 v0.4-notool.yaml：没有工具，prompt 是 answer_ctx_v1（少了计算器说明那一段），其余完全相同。
+name: v0.4-jsonmode
+description: 消融：v0.4 + 工具循环里开 JSON mode
+
+llm:
+  backend: openai_compat
+  base_url: https://api.deepseek.com
+  model: deepseek-flash
+  api_key_env: DEEPSEEK_API_KEY
+  thinking: false
+  max_tokens: 2048
+
+prompt:
+  name: answer_ctx_tools_v1
+  max_attempts: 2
+
+tools:
+  enabled: [calculate]
+  max_rounds: 6  # 每次尝试最多 6 轮工具调用；FinQA 最多 5 步计算，而且可以并行调用
+  json_mode: true  # 唯一的改动

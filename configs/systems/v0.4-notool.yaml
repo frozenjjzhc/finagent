@@ -1,0 +1,16 @@
+# v0.4 的对照组（L04 实验用）：和 v0.4.yaml 相比，没有 tools，prompt 也少了计算器说明那一段
+# （answer_ctx_v1 vs answer_ctx_tools_v1）。同样的模型、同样的上下文。
+name: v0.4-notool
+description: 开卷（给定财报片段），不带工具（对照组）
+
+llm:
+  backend: openai_compat
+  base_url: https://api.deepseek.com
+  model: deepseek-flash
+  api_key_env: DEEPSEEK_API_KEY
+  thinking: false
+  max_tokens: 2048
+
+prompt:
+  name: answer_ctx_v1
+  max_attempts: 2

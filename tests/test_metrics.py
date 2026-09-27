@@ -2,7 +2,7 @@
 
 import pytest
 
-from finagent.eval.datasets import EvalItem, parse_gold_number
+from finagent.eval.datasets import EvalItem, parse_finqa_gold, parse_gold_number
 from finagent.eval.metrics import (
     Grade,
     allowed_error,
@@ -183,3 +183,47 @@ def test_paired_diff() -> None:
 )
 def test_mcnemar(a_only, b_only, p) -> None:
     assert mcnemar_exact(a_only, b_only) == pytest.approx(p)
+
+
+# ---------------------------------------------------------------- 符号（L04）
+
+
+def test_sign_flip_is_tagged() -> None:
+    # "变化了多少"：标准答案 -5.2（下降），答成 5.2 → 错，标记 sign_error 方便错误分析
+    g = grade_number(item(-5.2, "percent", 1), answer(5.2, "percent"))
+    assert (g.label, g.tag) == ("incorrect", "sign_error")
+
+
+def test_sign_agnostic_question_accepts_magnitude() -> None:
+    # "下降了多少"：题目已经说明方向，答 5.2（下降 5.2）和 -5.2（变化 -5.2）都对
+    it = item(-5.2, "percent", 1).model_copy(update={"sign_agnostic": True})
+    assert grade_number(it, answer(5.2, "percent")).label == "correct"
+    assert grade_number(it, answer(-5.2, "percent")).label == "correct"
+    assert grade_number(it, answer(7.0, "percent")).tag == "wrong_value"  # 数值错了照样错
+
+
+# ---------------------------------------------------------------- FinQA 标准答案（L04）
+
+
+@pytest.mark.parametrize(
+    ("answer_text", "exe_ans", "expected"),
+    [
+        ("1.6%", 0.01641, (1.641, "percent", 1)),  # 程序算的是比率，文字写成百分比
+        ("24.69%", 24.69136, (24.69136, "percent", 2)),  # 程序里已经乘过 100
+        ("127.40", 127.4, (127.4, "other", 2)),
+        (".2", 0.2, (0.2, "other", 1)),
+        ("-12.4%", -0.12391, (-12.391, "percent", 1)),
+        ("$ 2457", 2457.0, (2457.0, "other", 0)),
+        ("3.4%", -0.0339, None),  # 两份标准答案符号对不上：丢掉
+        ("25%", 0.19495, None),  # 数值对不上：丢掉
+        ("yes", "yes", None),  # 不是数值题
+        ("", 1.0, None),
+    ],
+)
+def test_parse_finqa_gold(answer_text, exe_ans, expected) -> None:
+    result = parse_finqa_gold(answer_text, exe_ans)
+    if expected is None:
+        assert result is None
+    else:
+        assert result is not None
+        assert result[0] == pytest.approx(expected[0]) and result[1:] == expected[1:]

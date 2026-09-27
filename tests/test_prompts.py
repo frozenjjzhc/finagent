@@ -33,16 +33,20 @@ PROMPT_NAMES = [p.stem for p in list_prompts() if p.stem.startswith("answer_")]
 
 
 def test_prompt_files_exist() -> None:
-    assert {"answer_v1", "answer_v2", "answer_v3"} <= set(PROMPT_NAMES)
+    assert {"answer_v1", "answer_v2", "answer_v3", "answer_ctx_v1"} <= set(PROMPT_NAMES)
 
 
 @pytest.mark.parametrize("name", PROMPT_NAMES)
 def test_prompt_builds_valid_messages(name: str) -> None:
-    messages = load_prompt(name).build_messages("What is X?", today="2026-01-01")
+    prompt = load_prompt(name)
+    # 闭卷 prompt 用 today，开卷 prompt（L04 起）用 context；多给的变量会被忽略
+    messages = prompt.build_messages("What is X?", today="2026-01-01", context="CTX")
     assert messages[0]["role"] == "system"
     assert messages[-1]["role"] == "user"
     assert "What is X?" in messages[-1]["content"]
-    assert "2026-01-01" in messages[-1]["content"]
+    for var, value in (("today", "2026-01-01"), ("context", "CTX")):
+        if var in prompt.variables:
+            assert value in messages[-1]["content"]
     assert all("{{" not in str(m["content"]) for m in messages)  # 没有漏填的变量
     # DeepSeek 的 JSON mode 要求 prompt 里出现 "json" 这个词
     assert "json" in messages[0]["content"].lower()
@@ -68,7 +72,9 @@ def test_example_answers_match_the_schema(example) -> None:
 def test_examples_do_not_leak_eval_questions() -> None:
     # 示例不能和评测题重合，否则就是拿答案教模型，分数是假的（数据泄漏）
     # L03 起有了多个评测集，要对所有评测集都检查
-    eval_questions = [it.question for name in ("seed", "financebench") for it in load_evalset(name)]
+    eval_questions = [
+        it.question for name in ("seed", "financebench", "finqa") for it in load_evalset(name)
+    ]
     for name in PROMPT_NAMES:
         for ex in load_prompt(name).examples:
             assert not any(q in ex.user for q in eval_questions), f"{name} 的示例包含评测题"

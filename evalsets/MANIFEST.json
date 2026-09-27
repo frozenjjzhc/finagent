@@ -8,6 +8,20 @@
       "financebench_document_information.jsonl": "1c69127783879de8cdadb159d2181f39bc3123b8e0ebf74031c3969d69189575"
     }
   },
+  "finqa": {
+    "source": "https://github.com/czyssrs/FinQA",
+    "commit": "0f16e2867befa6840783e58be38c9efb9229d742",
+    "license": "MIT",
+    "raw_sha256": {
+      "dev.json": "a847fb7e0d61a3125a1e2909852df6b89f1ee64d2c5ff1bf689e332214deee51",
+      "test.json": "831dbfb2e785dbc227f895ce3f24046433467aec67b09db2bd6ac7692a8a30dc"
+    },
+    "dropped": {
+      "答案文字与程序结果对不上": 175,
+      "不是数值题（yes/no、空答案）": 58,
+      "重复题": 14
+    }
+  },
   "split_seed": 42,
   "files": {
     "financebench.jsonl": {
@@ -40,6 +54,21 @@
         "recent": 2,
         "calc": 2,
         "trap": 1
+      }
+    },
+    "finqa.jsonl": {
+      "sha256": "dfea08a246924623db8a2448beb68cb8b9dc8c93c07c8f908b2841f57bfec9ce",
+      "splits": {
+        "dev": 120,
+        "test": 150
+      },
+      "answer_types": {
+        "number": 270
+      },
+      "categories": {
+        "1-step": 90,
+        "3+-step": 90,
+        "2-step": 90
       }
     }
   }

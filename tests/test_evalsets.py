@@ -7,7 +7,7 @@ import pytest
 
 from finagent.eval.datasets import EVALSETS_DIR, load_evalset
 
-SETS = ["financebench", "seed"]
+SETS = ["financebench", "seed", "finqa"]
 
 
 @pytest.mark.parametrize("name", SETS)
@@ -44,3 +44,29 @@ def test_files_match_manifest() -> None:
         assert hashlib.sha256(data).hexdigest() == info["sha256"], (
             f"{name} 和 MANIFEST 不一致：被手工改过？"
         )
+
+
+def test_finqa_split_and_context() -> None:
+    dev, test = load_evalset("finqa", "dev"), load_evalset("finqa", "test")
+    assert (len(dev), len(test)) == (120, 150)
+    for split, n in ((dev, 40), (test, 50)):  # 按计算步数分层，每层一样多
+        for stratum in ("1-step", "2-step", "3+-step"):
+            assert sum(it.category == stratum for it in split) == n
+    for it in dev + test:
+        assert it.context and "Table:" in it.context  # 开卷题：每题都带财报片段
+        assert it.answer_type == "number" and it.gold_unit in ("percent", "other")
+
+
+def test_finqa_dev_and_test_come_from_different_sources() -> None:
+    # dev 只来自 FinQA 的 dev.json，test 只来自 test.json：同一页财报不会同时出现在两边
+    dev_docs = {it.evidence[0]["doc_name"] for it in load_evalset("finqa", "dev")}
+    test_docs = {it.evidence[0]["doc_name"] for it in load_evalset("finqa", "test")}
+    assert not dev_docs & test_docs
+
+
+def test_old_evalsets_do_not_gain_new_fields() -> None:
+    # L04 给 EvalItem 加了 context、sign_agnostic；取默认值时不写进文件，
+    # 这样 L03 的评测集文件逐字节不变，旧记录的哈希仍然对得上
+    for name in ("financebench", "seed"):
+        first = json.loads((EVALSETS_DIR / f"{name}.jsonl").read_text(encoding="utf-8").splitlines()[0])
+        assert "context" not in first and "sign_agnostic" not in first

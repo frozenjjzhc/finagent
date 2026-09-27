@@ -50,6 +50,16 @@ class PromptTemplate(BaseModel):
     examples: list[FewShotExample] = Field(default_factory=list)
     user_template: str = "{{question}}"
 
+    @property
+    def variables(self) -> set[str]:
+        """模板里用到的变量名，例如 {"today", "question"}。
+
+        render() 只会在"缺了变量"时报错，"多给了变量"时会静默忽略。所以调用方要自己检查：
+        比如评测集带了上下文，prompt 却没有 {{context}}，上下文就会被悄悄丢掉（L04）。
+        """
+        texts = [self.system, self.user_template]
+        return {m.group(1) for text in texts for m in _PLACEHOLDER.finditer(text)}
+
     def build_messages(self, question: str, **variables: object) -> list[Message]:
         """组装顺序：system → 示例（user/assistant 成对）→ 真正的问题。
 
