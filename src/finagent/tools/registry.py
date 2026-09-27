@@ -99,12 +99,9 @@ def tool(fn: Callable[..., Any]) -> Tool:
             raise ValueError(f"工具 {fn.__name__} 的参数 {name} 缺少类型注解")
         default = ... if param.default is inspect.Parameter.empty else param.default
         fields[name] = (hints[name], Field(default, description=arg_docs.get(name)))
+    # 多传了参数也算错（extra="forbid"）：生成的 schema 里是 additionalProperties: false
     args_model = create_model(
-        f"{fn.__name__}_args",
-        __config__=ConfigDict(
-            extra="forbid"
-        ),  # 多传了参数也算错：生成的 schema 里是 additionalProperties: false
-        **fields,
+        f"{fn.__name__}_args", __config__=ConfigDict(extra="forbid"), **fields
     )
     return Tool(name=fn.__name__, description=description, fn=fn, args_model=args_model)
 

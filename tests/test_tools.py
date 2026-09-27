@@ -150,3 +150,41 @@ def test_unexpected_exception_inside_tool_is_reported() -> None:
 def test_build_registry_rejects_unknown_names() -> None:
     with pytest.raises(ValueError, match="未知的工具"):
         build_registry(["calculate", "calculater"])  # 配置里拼错了名字：报错，而不是悄悄少一个工具
+
+
+# ---------------------------------------------------------------- 第二个工具：单位换算（补充讲义的示例）
+
+
+def test_convert_units_schema_uses_enum() -> None:
+    params = AVAILABLE_TOOLS["convert_units"].schema()["function"]["parameters"]
+    assert params["required"] == ["value", "from_scale", "to_scale"]
+    assert params["properties"]["value"]["type"] == "number"
+    # Literal 类型 → enum：模型只能从这几个值里选
+    scales = ["units", "thousands", "millions", "billions"]
+    assert params["properties"]["from_scale"]["enum"] == scales
+
+
+@pytest.mark.parametrize(
+    ("arguments", "ok", "text"),
+    [
+        ('{"value": 5829, "from_scale": "thousands", "to_scale": "millions"}', True, "5.829"),
+        ('{"value": 8.7, "from_scale": "billions", "to_scale": "millions"}', True, "8700"),
+        ('{"value": 3, "from_scale": "millions", "to_scale": "millions"}', True, "3"),
+        # pydantic 默认是宽松模式（L02）：字符串 "5829" 会被转成数字 5829
+        ('{"value": "5829", "from_scale": "thousands", "to_scale": "millions"}', True, "5.829"),
+        # 不在 enum 里的值：被拦下，错误信息里列出了允许的取值
+        ('{"value": 1, "from_scale": "thousand", "to_scale": "millions"}', False, "'thousands'"),
+        # Python 的 json.loads 接受 NaN，工具自己要检查
+        ('{"value": NaN, "from_scale": "units", "to_scale": "units"}', False, "finite"),
+    ],
+)
+def test_convert_units(arguments: str, ok: bool, text: str) -> None:
+    step = build_registry(["convert_units"]).execute(ToolCall("c", "convert_units", arguments))
+    assert step.ok is ok and text in step.result
+
+
+def test_registry_with_two_tools() -> None:
+    registry = build_registry(["calculate", "convert_units"])
+    assert [s["function"]["name"] for s in registry.schemas()] == ["calculate", "convert_units"]
+    step = registry.execute(ToolCall("c", "calculate", '{"expression": "5829 - 5735"}'))
+    assert step.result == "94"  # 按名字分派到正确的函数

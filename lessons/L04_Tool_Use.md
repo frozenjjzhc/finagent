@@ -4,6 +4,7 @@
 > 📍 版本：v0.4（系统可以读给定的财报片段，并调用计算器；这就是 L05 RAG 里的"阅读器"）
 > 📦 本课产出：工具注册表、AST 白名单计算器、手写的工具循环、FinQA 评测集（270 题）、纯算术探针、SCOREBOARD 的 L04 实验记录
 > 🧭 **配套阅读指南**：[L04_阅读指南.md](L04_阅读指南.md)
+> 🔧 **补充讲义**：[L04_补充_如何添加工具.md](L04_补充_如何添加工具.md)（计算器是怎么一层层加进来的；手把手加第二个工具 `convert_units`）
 
 ---
 
@@ -476,7 +477,7 @@ system prompt 要求"每一步计算都用计算器"之后，模型的做题过�
 ```powershell
 conda activate finagent
 cd D:\claude\best\finagent
-python -m pytest -q                                   # 165 个测试应全部通过
+python -m pytest -q                                   # 173 个测试应全部通过
 python walkthroughs/L04_tool_loop.py --offline        # 离线：schema、AST 白名单
 python walkthroughs/L04_tool_loop.py                  # 联网：手写工具循环，约 $0.002
 python scripts/l04_arith_probe.py --per-type 2 --yes  # 算术探针的冒烟测试，约 $0.001

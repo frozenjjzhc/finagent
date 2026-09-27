@@ -122,7 +122,7 @@ finagent/
 |   |-- pipeline/    answer.py                                            [L02]
 |   |-- eval/        datasets.py  metrics.py  judge.py  run.py            [L03]
 |   |-- llm/         structured.py（通用：JSON mode → 校验 → 带反馈重试）    [L03]
-|   |-- tools/       registry.py  calculator.py                           [L04]
+|   |-- tools/       registry.py  calculator.py  units.py（加工具的示例）   [L04]
 |   |                search_filings.py  get_metric.py                     [L07]
 |   |-- agent/       loop.py [L04]   react.py [L07]
 |   |-- data/        edgar.py  ingest.py                                  [L05]
