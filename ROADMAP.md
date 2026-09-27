@@ -80,10 +80,10 @@
 - 🎤 How would you evaluate an LLM system? · LLM-as-judge 可靠吗，怎么校准？ · 怎么判断一个提升是真的？
 
 #### L04 · Tool Use（函数调用）→ v0.4 ⏱ 5h
-- **痛点**：eval 显示，即使把财报原文直接给模型（oracle context），增长率、比率、CAGR 这类多步算术仍然会错。
+- **痛点**：eval 显示，即使把财报原文直接给模型（oracle context），增长率、比率、CAGR 这类多步算术仍然会错。（L04 实测修正：flash 的四则运算其实很准，弱点是开方类运算；FinQA 上计算器的提升主要来自"把计算做完整"）
 - **知识点**：LLM 为什么算不好数（tokenization 把数字切得很乱，L08 你会亲眼看到）· function calling 的本质：模型只输出"调用意图"（JSON），执行在你这边 · tool schema 设计（名字和描述的写法直接影响调用准确率）· **手写 tool loop**：请求 → `finish_reason=tool_calls` → 执行 → 用 `role: tool` 消息回传结果 → 再请求 · 并行调用 · 错误回传（把异常信息当作工具结果返回，让模型自己纠正）· thinking 模式下带工具时，之前各轮的 `reasoning_content` 要原样传回（DeepSeek 文档的要求）· 安全：计算器用 AST 白名单，**绝不用 `eval()`**
 - **动手**：`tools/registry.py`（装饰器从函数签名 + docstring 自动生成 schema）· `tools/calculator.py` · `agent/loop.py` · `walkthroughs/L04_tool_loop.py`
-- **实验**：先构建 FinQA 评测子集（每题附带财报片段，也就是给定上下文），再比较 no-tool vs calculator。控制变量：上下文完全相同，只变工具，就是你 CSCI 566 用的那套方法。
+- **实验**：先构建 FinQA 评测子集（每题附带财报片段，也就是给定上下文），再比较 no-tool vs calculator。控制变量：上下文完全相同，只变工具，就是你 CSCI 566 用的那套方法。另加纯算术探针（`scripts/l04_arith_probe.py`）和两个消融（不给使用说明、开 JSON mode）；主对比重复跑两次。
 - 🎤 function calling 底层怎么工作？ · 怎么设计好的 tool schema？ · 模型传了坏参数怎么办？
 
 #### L05 · RAG ① 基础管线 → v0.5 ⏱ 7h
@@ -248,7 +248,7 @@
 - [x] L01 LLM API 基础（2026-09-26，v0.1）
 - [x] L02 Prompt + 结构化输出（2026-09-27，v0.2；作业为选做）
 - [x] L03 Eval 驱动开发 ★（2026-09-27，v0.3；test 基线 37.0%）
-- [ ] L04 Tool Use
+- [x] L04 Tool Use（2026-09-27，v0.4；FinQA dev：计算器 +5.4 个百分点，两次平均）
 - [ ] L05 RAG 基础
 - [ ] L06 RAG 检索工程
 - [ ] L07 Agent 🏁（可写进简历）

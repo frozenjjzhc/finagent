@@ -61,8 +61,16 @@ def git_info() -> dict:
     """当前代码的 commit，以及有没有未提交的修改（有的话，结果就不能严格复现）。"""
 
     def git(*args: str) -> str:
+        # encoding 必须写明：git 输出的是 UTF-8（中文文件名，如 lessons/L04_阅读指南.md），
+        # 而 text=True 在中文 Windows 上默认按 GBK 解码，遇到中文文件名就会出错（L04 发现的 bug）
         return subprocess.run(
-            ["git", *args], cwd=PROJECT_ROOT, capture_output=True, text=True, check=True
+            ["git", *args],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
         ).stdout.strip()
 
     try:

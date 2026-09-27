@@ -104,12 +104,13 @@ finagent/
 |-- README.md  ROADMAP.md  SCOREBOARD.md  pyproject.toml  .env.example   [L00]
 |-- docs/            PRD.md  ARCHITECTURE.md                              [L00]
 |-- lessons/         Lxx_*.md 讲义                                        [L00+]
-|-- scripts/         check_env.py [L00]  l01_compare.py [L01]（每课的实验脚本）
+|-- scripts/         check_env.py [L00]  l01_compare.py [L01]  build_evalsets.py [L03]  l04_arith_probe.py [L04]（每课的实验脚本）
 |-- configs/
 |   |-- systems/     v0.1.yaml ... v1.0.yaml（每个系统版本一份）            [L01+]
 |   |-- eval.yaml    评测设置：裁判、容差、bootstrap（和系统配置分开）    [L03]
 |   '-- train/       sft_*.yaml  dpo_*.yaml                               [L11+]
 |-- prompts/         answer_v1.yaml / v2 / v3（每个版本一个文件）          [L02]
+|                   answer_ctx_v1 / answer_ctx_tools_v1（开卷，读给定片段）  [L04]
 |-- evalsets/        financebench / seed [L03]  finqa [L04]  multihop [L07]；MANIFEST、judge_calibration/
 |-- src/finagent/
 |   |-- cli.py                                                            [L01]
@@ -145,7 +146,7 @@ finagent/
 | v0.1 ✅ | `llm/`（base / openai_compat / pricing）、`cli.py`、`tracing.py`、`config.py` | 闭卷问答，记录成本 |
 | v0.2 ✅ | `prompts/`、`schemas.py`、`prompts.py`、`pipeline/answer.py` | 结构化答案，可自动判分 |
 | v0.3 ✅ | `eval/`、`evalsets/`、`llm/structured.py`、SCOREBOARD 的 test 基线 | **可度量**：置信区间、配对比较、可复现的记录目录 |
-| v0.4 | `tools/`、`agent/loop.py` | 算对数 |
+| v0.4 ✅ | `tools/`（registry、calculator）、`agent/loop.py`、FinQA 评测集 | **算对数**：读给定的财报片段，调用计算器（L05 的"阅读器"） |
 | v0.5 | `data/`、`rag/` 基础 | 有依据地回答，带引用 |
 | v0.6 | `rag/` 进阶 | 检索更准 |
 | v0.7 | `agent/react.py`、trajectories | 多跳问题；**老师系统完成** |

@@ -14,7 +14,7 @@
 
 ## 当前状态
 
-**v0.3**：有了正式评测（L03）。`finagent eval` 在 FinanceBench 上评测并生成可复现的记录，`finagent compare` 做配对比较。闭卷基线：test 准确率 37.0%（95% 区间 27% ~ 47%），见 [SCOREBOARD.md](SCOREBOARD.md)
+**v0.4**：会用工具了（L04）。给定一页财报（`finagent ask --context-file`），模型读出数字、调用计算器（AST 白名单，不用 eval）算出答案。FinQA dev 上计算器带来约 +5 个百分点（两次平均，95% 区间 +2 ~ +9）。闭卷基线（v0.3）：FinanceBench test 37.0%。详见 [SCOREBOARD.md](SCOREBOARD.md)
 
 ## 快速开始（Windows / PowerShell）
 

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "finagent"
-version = "0.1.0"  # 每完成一课 bump 一次：L01 -> 0.1.0，L02 -> 0.2.0 ...
+version = "0.4.0"  # 每完成一课 bump 一次：L01 -> 0.1.0，L02 -> 0.2.0 ...
 description = "Financial-filings QA agent: from prompting & RAG to LoRA/DPO distillation into a local small model."
 readme = "README.md"
 requires-python = ">=3.10"
