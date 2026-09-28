@@ -108,9 +108,11 @@ finagent/
 |-- configs/
 |   |-- systems/     v0.1.yaml ... v1.0.yaml（每个系统版本一份）            [L01+]
 |   |-- eval.yaml    评测设置：裁判、容差、bootstrap（和系统配置分开）    [L03]
+|   |-- index/       fb_bge_small.yaml（索引怎么建：语料、切块、向量模型） [L05]
 |   '-- train/       sft_*.yaml  dpo_*.yaml                               [L11+]
 |-- prompts/         answer_v1.yaml / v2 / v3（每个版本一个文件）          [L02]
 |                   answer_ctx_v1 / answer_ctx_tools_v1（开卷，读给定片段）  [L04]
+|                   answer_rag_v1（读检索到的片段，引用编号）             [L05]
 |-- evalsets/        financebench / seed [L03]  finqa [L04]  multihop [L07]；MANIFEST、judge_calibration/
 |-- src/finagent/
 |   |-- cli.py                                                            [L01]
@@ -125,7 +127,7 @@ finagent/
 |   |-- tools/       registry.py  calculator.py  units.py（加工具的示例）   [L04]
 |   |                search_filings.py  get_metric.py                     [L07]
 |   |-- agent/       loop.py [L04]   react.py [L07]
-|   |-- data/        edgar.py  ingest.py                                  [L05]
+|   |-- data/        ingest.py（PDF → 每页文字，按坐标重建表格行）           [L05]
 |   |-- rag/         chunker.py  embedder.py  index.py  retriever.py      [L05]
 |   |                bm25.py  hybrid.py  reranker.py  query_rewrite.py    [L06]
 |   |-- training/    data/build_sft.py [L10]  sft.py [L11]
@@ -147,7 +149,7 @@ finagent/
 | v0.2 ✅ | `prompts/`、`schemas.py`、`prompts.py`、`pipeline/answer.py` | 结构化答案，可自动判分 |
 | v0.3 ✅ | `eval/`、`evalsets/`、`llm/structured.py`、SCOREBOARD 的 test 基线 | **可度量**：置信区间、配对比较、可复现的记录目录 |
 | v0.4 ✅ | `tools/`（registry、calculator）、`agent/loop.py`、FinQA 评测集 | **算对数**：读给定的财报片段，调用计算器（L05 的"阅读器"） |
-| v0.5 | `data/`、`rag/` 基础 | 有依据地回答，带引用 |
+| v0.5 ✅ | `data/ingest.py`、`rag/`（chunker、embedder、index、retriever）、`eval/retrieval.py` | **有依据地回答，带引用**：答错大幅减少；瓶颈在检索 |
 | v0.6 | `rag/` 进阶 | 检索更准 |
 | v0.7 | `agent/react.py`、trajectories | 多跳问题；**老师系统完成** |
 | v0.8 | `llm/local_hf.py` | 可切换到本地学生 |

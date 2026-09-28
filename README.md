@@ -14,7 +14,7 @@
 
 ## 当前状态
 
-**v0.4**：会用工具了（L04）。给定一页财报（`finagent ask --context-file`），模型读出数字、调用计算器（AST 白名单，不用 eval）算出答案。FinQA dev 上计算器带来约 +5 个百分点（两次平均，95% 区间 +2 ~ +9）。闭卷基线（v0.3）：FinanceBench test 37.0%。详见 [SCOREBOARD.md](SCOREBOARD.md)
+**v0.5**：会自己查财报了（L05）。系统从 84 份财报 PDF 里检索最相关的页（`finagent search` 可以直接看检索结果），再读、再算，并用编号引用出处。FinanceBench dev 上答错率从约 44% 降到约 13%，准确率从 30% 升到 45% 左右；直接给证据页时是 88%，瓶颈在检索。详见 [SCOREBOARD.md](SCOREBOARD.md)
 
 ## 快速开始（Windows / PowerShell）
 

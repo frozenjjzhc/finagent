@@ -91,6 +91,7 @@
 - **知识点**：ingest → chunk → embed → index → retrieve → generate 全流程 · 数据获取与清洗（SEC EDGAR HTML、财报 PDF；可移植你 ai-equity-research 里的 `edgar.py`）· chunking：定长 + overlap vs 按章节（Item 7 MD&A / Item 8 财务报表）· **表格怎么处理**（财报 RAG 的核心难点）· embedding 原理（bi-encoder、对比学习、cosine）· **先用 numpy 手写暴力检索，再换 FAISS**，理解 ANN（IVF / HNSW 的直觉）· 带引用的生成
 - **动手**：`data/ingest.py` · `rag/{chunker, embedder, index, retriever}.py` · `walkthroughs/L05_retrieval.py`（5 个玩具 chunk，把相似度矩阵打印出来）
 - **实验**：closed-book vs RAG(top-5) 的端到端准确率 + 检索 Recall@k（FinanceBench 带 evidence 页码，可以自动判断检索是否命中）
+- **实际做法（L05 记录）**：语料改用 FinanceBench 自带的 PDF（HTML 没有页码，没法和证据页对照），`edgar.py` 的移植推迟到需要新财报时；表格用"按坐标重建行"处理；另加 oracle（直接给证据页）上限实验和 small-to-big（用块检索、给整页）消融。
 - 🎤 讲一遍 RAG pipeline · chunk size 怎么选？ · RAG vs 长上下文 vs 微调？
 
 #### L06 · RAG ② 检索质量工程 → v0.6 ⏱ 6h
@@ -249,7 +250,7 @@
 - [x] L02 Prompt + 结构化输出（2026-09-27，v0.2；作业为选做）
 - [x] L03 Eval 驱动开发 ★（2026-09-27，v0.3；test 基线 37.0%）
 - [x] L04 Tool Use（2026-09-27，v0.4；FinQA dev：计算器 +5.4 个百分点，两次平均）
-- [ ] L05 RAG 基础
+- [x] L05 RAG 基础（2026-09-28，v0.5；dev：R@5 48%，答错率 44% → 13%，oracle 88%）
 - [ ] L06 RAG 检索工程
 - [ ] L07 Agent 🏁（可写进简历）
 - [ ] L08 本地推理
