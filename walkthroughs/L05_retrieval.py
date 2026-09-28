@@ -168,25 +168,42 @@ def step4_ann(retriever: Retriever) -> None:
 
 
 def step5_example(retriever: Retriever) -> None:
-    banner("第 5 步 · 一道真实的题（dev 集，test 的题只在里程碑看）")
-    item = next(it for it in load_evalset("financebench", "dev") if it.id == "fb03282")
+    banner("第 5 步 · 一道真实的题：small-to-big（dev 集，test 的题只在里程碑看）")
+    # dev 的 fb07661：Block（原 Square）FY2020 经营活动现金流，答案在现金流量表的这一行
+    item = next(it for it in load_evalset("financebench", "dev") if it.id == "fb07661")
+    key_line = "Net cash provided by operating activities"
     gold = {(e["doc_name"], e["page"]) for e in item.evidence}
     print(f"问题：{item.question}\n证据页：{sorted(gold)}（页码从 0 开始）\n")
-    hits = retriever.search(item.question, 10)
-    for h in hits:
+    print("前 5 名：")
+    for h in retriever.search(item.question, 5):
         c = h.chunk
         mark = "  ← 证据页" if (c.doc_name, c.page) in gold else ""
-        print(f"  #{h.rank:<2} {h.score:.3f}  {c.doc_name} p{c.page}{mark}")
-        if h.rank <= 2 or mark:
-            print(f"        {' '.join(c.text.split())[:110]}…")
-    gold_ranks = [h.rank for h in hits if (h.chunk.doc_name, h.chunk.page) in gold]
-    if len(gold_ranks) >= 2:
+        print(f"  #{h.rank} {h.score:.3f}  {c.id}{mark}")
+
+    # 证据页上的每一块排第几？它有没有写着答案的那一行？
+    scores = retriever.index.vectors @ retriever.embedder.embed_queries([item.question])[0]
+    print("\n证据页被切成的每一块：")
+    page_ranks, key_ranks = [], []
+    for i, c in enumerate(retriever.chunks):
+        if (c.doc_name, c.page) in gold:
+            rank = int((scores > scores[i]).sum()) + 1
+            has_key = key_line in c.text
+            page_ranks.append(rank)
+            if has_key:
+                key_ranks.append(rank)
+            first = " ".join(c.text.splitlines()[0].split())[:60]
+            print(
+                f"  {c.id}  排第 {rank:>4}  {'有答案那一行' if has_key else '          '}  开头：{first}"
+            )
+    if min(page_ranks) <= 5 and key_ranks and min(key_ranks) > 5:
         print(
-            f"\n证据页上的块出现在第 {gold_ranks} 名。同一页被切成了好几块，各自的排名不同：\n"
-            "看看每一块的开头，真正写着答案数字的那一块，排名可能并不靠前。\n"
-            "v0.5 的做法（context: page）是：只要这一页的**任何一块**进了前 5，就把整页交给模型，\n"
-            "数字和表头都在里面。这就是 small-to-big：用小块检索，用整页回答。"
+            f"\n这一页最靠前的块排第 {min(page_ranks)}，进了前 5；但写着 {key_line!r} 的块\n"
+            f"最好也只排第 {min(key_ranks)}。只把前 5 个块交给模型（context: chunk），它就看不到答案；\n"
+            "v0.5 的做法（context: page）是：只要这一页的任何一块进了前 5，就把整页交给模型。\n"
+            "这就是 small-to-big：用小块检索，用整页回答。"
         )
+    else:
+        print("\n（这次的排名和讲义里不同，请对照上面的实际结果理解 small-to-big）")
 
 
 def main() -> None:
