@@ -1,0 +1,30 @@
+# L05 消融：和 v0.5.yaml 只差一处，交给模型的是检索到的 5 个文本块本身（context: chunk），不扩展成整页。
+# （下面是 v0.5.yaml 原来的说明）
+# 在 v0.4（阅读器 + 计算器）前面接上检索：问题 → 检索 top-5 文本块 → 取它们所在的整页 → 模型回答。
+#   索引：configs/index/fb_bge_small.yaml（FinanceBench 的 84 份文档，bge-small，256 token 一块）
+#   上下文：page（small-to-big：用小块检索、用整页回答，表格的表头和数字不会被切开）
+# 对照：v0.3（闭卷）、v0.5-chunk（只给文本块）、v0.5-oracle（直接给证据页，阅读器的上限）
+name: v0.5-chunk
+description: 消融：v0.5，但上下文只有检索到的文本块
+
+llm:
+  backend: openai_compat
+  base_url: https://api.deepseek.com
+  model: deepseek-flash
+  api_key_env: DEEPSEEK_API_KEY
+  thinking: false
+  max_tokens: 2048
+
+prompt:
+  name: answer_rag_v1
+  max_attempts: 2
+
+tools:
+  enabled: [calculate]
+  max_rounds: 6
+  json_mode: false
+
+retrieval:
+  index: fb_bge_small
+  top_k: 5
+  context: chunk  # 唯一的改动

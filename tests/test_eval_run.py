@@ -146,3 +146,63 @@ def test_prompt_must_fit_the_evalset(tmp_path) -> None:
     system = load_config("configs/systems/v0.3.yaml")
     with pytest.raises(ValueError, match="context"):
         run_eval(system, "finqa", "dev", EVAL_CFG, limit=1, out_root=tmp_path)
+
+
+# ---------------------------------------------------------------- 检索（L05）
+
+
+class FakeContextBuilder:
+    """假的检索：每道题都返回两段材料，第 1 段是证据页，第 2 段不是。"""
+
+    def __init__(self, cfg) -> None:
+        self.cfg = cfg
+
+    def retrieve(self, questions):
+        from finagent.rag.retriever import Source
+
+        return [
+            [Source(1, "DOC", 7, "Doc 10-K", "evidence text", 0.9), Source(2, "OTHER", 1, "Other", "noise", 0.5)]
+            for _ in questions
+        ]  # fmt: skip
+
+
+class CitingClient(FakeClient):
+    """系统回答时引用 [1]，并确认上下文确实进了 prompt。"""
+
+    def chat(self, messages, on_delta=None, json_mode=False, tools=None) -> LLMResponse:
+        if self.is_judge:
+            return super().chat(messages, on_delta, json_mode)
+        assert "[1] Doc 10-K, page 8" in messages[-1]["content"]  # 检索结果以编号的形式进了 prompt
+        content = json.dumps(
+            {"reasoning": "r", "status": "unknown", "value": None, "unit": None,
+             "answer_text": "I do not know.", "sources": ["[1]"], "confidence": "low"}
+        )  # fmt: skip
+        return LLMResponse(content, "stop", "fake", Usage(), 0.01, 0.001)
+
+
+def test_run_eval_with_retrieval(tmp_path, monkeypatch) -> None:
+
+    items = [
+        EvalItem(id=f"q{i}", source="financebench", split="dev", question=f"Q{i}?",
+                 answer_type="text", gold_text="x", evidence=[{"doc_name": "DOC", "page": 7}])
+        for i in range(3)
+    ]  # fmt: skip
+    monkeypatch.setattr("finagent.eval.run.load_evalset", lambda name, split: items)
+    system = load_config("configs/systems/v0.5.yaml")
+    run_dir = run_eval(
+        system, "financebench", "dev", EVAL_CFG, out_root=tmp_path,
+        make_client=CitingClient, make_context=FakeContextBuilder,
+    )  # fmt: skip
+    rows = [json.loads(x) for x in (run_dir / "results.jsonl").read_text("utf-8").splitlines()]
+    assert all(r["retrieval_hit"] and r["doc_hit"] for r in rows)
+    assert all(r["cited"] == [1] and r["cited_evidence"] for r in rows)
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["retrieval"]["hit_rate"] == 1.0 and summary["retrieval"]["mean_sources"] == 2.0
+    assert "## 检索" in (run_dir / "report.md").read_text(encoding="utf-8")
+
+
+def test_retrieval_needs_a_context_prompt(tmp_path) -> None:
+    system = load_config("configs/systems/v0.5.yaml")
+    with pytest.raises(ValueError, match="context"):
+        run_eval(system, "financebench", "dev", EVAL_CFG, prompt_name="answer_v3", limit=1,
+                 out_root=tmp_path, make_context=FakeContextBuilder)  # fmt: skip

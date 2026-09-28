@@ -46,8 +46,9 @@ REQUIREMENTS: list[tuple[int, str, list[str]]] = [
     (
         5,
         "RAG: 数据与检索（embedding 模型需要 torch）",
-        ["torch", "httpx", "beautifulsoup4", "sentence-transformers", "faiss-cpu", "rank-bm25"],
+        ["torch", "numpy", "pymupdf", "sentence-transformers", "faiss-cpu"],
     ),
+    (6, "RAG 进阶：关键词检索", ["rank-bm25"]),
     (
         8,
         "本地模型与训练",

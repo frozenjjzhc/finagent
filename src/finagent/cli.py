@@ -115,7 +115,31 @@ def ask(
             )
             raise typer.Exit(2)
         context = context_file.read_text(encoding="utf-8") if context_file else None
+        if system.retrieval is not None:  # v0.5 起：先检索，检索结果就是上下文
+            if context_file:
+                typer.secho("这个系统会自己检索，不需要 --context-file", fg="red", err=True)
+                raise typer.Exit(2)
+            context = _retrieve_for_question(system, question)
         _ask_structured(client, llm_cfg, system, question, context, show_json, show_reasoning)
+
+
+def _retrieve_for_question(system: SystemConfig, question: str) -> str:
+    """检索并打印找到了哪些材料，返回拼好的上下文。"""
+    from finagent.rag.retriever import ContextBuilder, format_context
+
+    assert system.retrieval is not None
+    if system.retrieval.oracle:
+        typer.secho("oracle 模式只能在评测时用（要用题目标注的证据页）", fg="red", err=True)
+        raise typer.Exit(2)
+    try:
+        sources = ContextBuilder(system.retrieval).retrieve([question])[0]
+    except (FileNotFoundError, ValueError) as e:
+        typer.secho(str(e), fg="red", err=True)
+        raise typer.Exit(1) from None
+    typer.secho("[检索到的材料]", fg="bright_black")
+    for s in sources:
+        typer.secho(f"  {s.header()}  相似度 {s.score:.3f}", fg="bright_black")
+    return format_context(sources)
 
 
 def _ask_raw(
@@ -246,7 +270,7 @@ def eval_cmd(
     items = load_evalset(evalset, split)[:limit]
     prompt_name = prompt or system.prompt.name
     try:
-        check_prompt_fits(prompt_name, items)
+        check_prompt_fits(prompt_name, items, system.retrieval)
     except ValueError as e:
         typer.secho(str(e), fg="red", err=True)
         raise typer.Exit(2) from None
@@ -278,6 +302,66 @@ def eval_cmd(
     )
     typer.echo(f"记录目录：{run_dir}")
     typer.echo(f"报告：{run_dir / 'report.md'}")
+
+
+@app.command("build-corpus")
+def build_corpus_cmd(
+    layout: Annotated[
+        str, typer.Option(help="rows：按行重建表格（默认）；text：PyMuPDF 默认输出")
+    ] = "rows",
+) -> None:
+    """下载 FinanceBench 的 PDF 并逐页抽取文字（L05）。PDF 已下载的会跳过。"""
+    from finagent.data.ingest import build_corpus, pages_file
+
+    if layout not in ("rows", "text"):
+        typer.secho("--layout 只能是 rows 或 text", fg="red", err=True)
+        raise typer.Exit(2)
+    stats = build_corpus(layout=layout)
+    typer.echo(
+        f"{stats['docs']} 份文档、{stats['pages']} 页（其中 {stats['empty_pages']} 页没有文字）"
+        f" → {pages_file(layout)}"
+    )
+
+
+@app.command("build-index")
+def build_index_cmd(
+    index: Annotated[str, typer.Option(help="索引名，对应 configs/index/<名字>.yaml")] = "fb_bge_small",
+) -> None:
+    """切块 + 向量化，建立检索索引（L05）。第一次运行会下载向量模型。"""
+    from finagent.config import load_index_config
+    from finagent.rag.retriever import build_index
+
+    out = build_index(load_index_config(index))
+    meta = json.loads((out / "meta.json").read_text(encoding="utf-8"))
+    t = meta["tokens"]
+    typer.echo(
+        f"{meta['n_chunks']:,} 个文本块，平均 {t['mean']} 个 token，最长 {t['max']}，"
+        f"被截断 {t['truncated']} 个；用时 {meta['build_seconds']}s → {out}"
+    )
+
+
+@app.command()
+def search(
+    query: Annotated[str, typer.Argument(help="要检索的问题")],
+    index: Annotated[str, typer.Option(help="索引名")] = "fb_bge_small",
+    k: Annotated[int, typer.Option(help="返回几个文本块")] = 5,
+    full: Annotated[bool, typer.Option("--full", help="打印文本块全文")] = False,
+) -> None:
+    """只检索、不回答：看看问题能找到哪些文本块（L05 调试检索用，不花钱）。"""
+    from finagent.rag.retriever import Retriever
+
+    try:
+        hits = Retriever.load(index).search(query, k)
+    except (FileNotFoundError, ValueError) as e:
+        typer.secho(str(e), fg="red", err=True)
+        raise typer.Exit(1) from None
+    for h in hits:
+        c = h.chunk
+        typer.secho(
+            f"\n#{h.rank}  相似度 {h.score:.3f}  {c.title}, page {c.page + 1}  ({c.id})", bold=True
+        )
+        text = c.text if full else " ".join(c.text.split())[:300] + "…"
+        typer.echo(text)
 
 
 @app.command()

@@ -66,8 +66,27 @@ class ToolsConfig(BaseModel):
     json_mode: bool = False
 
 
+class RetrievalConfig(BaseModel):
+    """检索（L05）：回答前先从语料里找出相关的片段，作为上下文交给模型。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    index: str | None = None  # 索引名：configs/index/<index>.yaml 描述，建好后在 data/index/<index>/
+    top_k: int = Field(default=5, ge=1)  # 取相似度最高的几个文本块
+    # 交给模型的是什么：chunk = 检索到的文本块本身；page = 文本块所在的整页（small-to-big，见 L05 讲义）
+    context: Literal["chunk", "page"] = "page"
+    # oracle = 不检索，直接用标准答案标注的证据页（"检索永远正确"的上限实验）
+    oracle: bool = False
+
+    @model_validator(mode="after")
+    def _index_unless_oracle(self) -> RetrievalConfig:
+        if not self.oracle and not self.index:
+            raise ValueError("不是 oracle 模式时，必须指定 index")
+        return self
+
+
 class SystemConfig(BaseModel):
-    """一个完整的系统版本。L01 只有 llm；L02 加上 prompt；L04 加上 tools；后面还会加 retrieval。"""
+    """一个完整的系统版本。L01 只有 llm；L02 加上 prompt；L04 加上 tools；L05 加上 retrieval。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -76,6 +95,49 @@ class SystemConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     prompt: PromptConfig | None = None  # None = 裸调模式（v0.1）：没有模板，也不要求结构化输出
     tools: ToolsConfig | None = None  # None = 不带工具（v0.3 及以前）
+    retrieval: RetrievalConfig | None = None  # None = 不检索（闭卷，或者题目自带上下文）
+
+
+class EmbedderConfig(BaseModel):
+    """向量模型（L05）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = "BAAI/bge-small-en-v1.5"
+    revision: str | None = None  # 固定到 HuggingFace 上的某个 commit，和评测集固定版本是一个道理
+    query_prefix: str = ""  # 问题前面要加的话（bge 系列要求加，文本块不加）
+    device: str = "auto"  # auto = 有 GPU 用 GPU
+    batch_size: int = Field(default=64, ge=1)
+
+
+class ChunkConfig(BaseModel):
+    """怎么切块（L05）。token 数按向量模型的分词器来数。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_tokens: int = Field(default=256, ge=16)
+    overlap_tokens: int = Field(default=32, ge=0)
+    title: bool = True  # 每块开头加文档标题（如 "3M 10-K 2018"）
+
+    @model_validator(mode="after")
+    def _overlap_smaller(self) -> ChunkConfig:
+        if self.overlap_tokens >= self.max_tokens:
+            raise ValueError("overlap_tokens 必须小于 max_tokens")
+        return self
+
+
+class IndexConfig(BaseModel):
+    """一个索引 = 语料 + 切块方式 + 向量模型 + 索引类型（L05）。configs/index/<name>.yaml。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: str = ""
+    corpus_layout: Literal["rows", "text"] = "rows"  # 用哪种方式抽取的 PDF 文字（data/ingest.py）
+    embedder: EmbedderConfig = Field(default_factory=EmbedderConfig)
+    chunk: ChunkConfig = Field(default_factory=ChunkConfig)
+    backend: Literal["numpy", "faiss"] = "numpy"  # numpy = 手写的暴力检索；faiss = FAISS 库
+    faiss_factory: str = "Flat"  # FAISS 的索引类型：Flat（精确）、HNSW32、IVF256,Flat（近似）
 
 
 class JudgeConfig(BaseModel):
@@ -105,6 +167,16 @@ def load_eval_config(path: str | Path = "configs/eval.yaml") -> EvalConfig:
     if not p.is_absolute() and not p.exists():
         p = PROJECT_ROOT / p
     return EvalConfig.model_validate(yaml.safe_load(p.read_text(encoding="utf-8")))
+
+
+def load_index_config(name_or_path: str | Path) -> IndexConfig:
+    """按名字（configs/index/<name>.yaml）或路径读取索引配置。"""
+    p = Path(name_or_path)
+    if p.suffix != ".yaml":
+        p = PROJECT_ROOT / "configs" / "index" / f"{name_or_path}.yaml"
+    elif not p.is_absolute() and not p.exists():
+        p = PROJECT_ROOT / p
+    return IndexConfig.model_validate(yaml.safe_load(p.read_text(encoding="utf-8")))
 
 
 def load_config(path: str | Path) -> SystemConfig:

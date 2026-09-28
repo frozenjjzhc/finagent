@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -25,11 +26,12 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import openai
 import yaml
 
-from finagent.config import PROJECT_ROOT, EvalConfig, LLMConfig, SystemConfig
+from finagent.config import PROJECT_ROOT, EvalConfig, LLMConfig, RetrievalConfig, SystemConfig
 from finagent.eval.datasets import EVALSETS_DIR, EvalItem, load_evalset
 from finagent.eval.judge import Judge
 from finagent.eval.metrics import (
@@ -41,6 +43,7 @@ from finagent.eval.metrics import (
     percentile,
     summarize,
 )
+from finagent.eval.retrieval import evidence_pages
 from finagent.llm.base import LLMClient
 from finagent.llm.openai_compat import OpenAICompatClient
 from finagent.llm.pricing import PEAK_PRICES, is_peak
@@ -48,8 +51,12 @@ from finagent.pipeline.answer import AnswerResult, answer_question, today_iso, t
 from finagent.prompts import PROMPTS_DIR, load_prompt
 from finagent.schemas import Answer, format_value
 
+if TYPE_CHECKING:  # 只给类型检查用：rag 依赖 numpy、torch，不做检索的评测不该为此导入它们
+    from finagent.rag.retriever import ContextBuilder, Source
+
 RUNS_EVAL = PROJECT_ROOT / "runs" / "eval"
 ClientFactory = Callable[[LLMConfig, str], LLMClient]
+ContextFactory = Callable[[RetrievalConfig], "ContextBuilder"]
 LABEL_ICON = {"correct": "✅", "incorrect": "❌", "abstained": "🤷", "invalid": "💥", "error": "⚠️"}
 
 
@@ -99,6 +106,9 @@ def estimate_cost(
         for m in prompt.build_messages("x" * 200, today="2026-01-01", context="")
     )
     context_chars = sum(len(it.context or "") for it in items) / max(len(items), 1)
+    if system.retrieval is not None:  # L05：一页财报约 4000 个字符，一个文本块约 1000 个
+        r = system.retrieval
+        context_chars = 2 * 4000 if r.oracle else r.top_k * (4000 if r.context == "page" else 1000)
     calls = 3 if system.tools and system.tools.enabled else 1
     _, s_miss, s_out = PEAK_PRICES.get(system.llm.model, (0, 1.32, 3.96))
     _, j_miss, j_out = PEAK_PRICES.get(eval_cfg.judge.llm.model, (0, 1.32, 3.96))
@@ -108,14 +118,36 @@ def estimate_cost(
     return discount * (len(items) * per_item + n_text * per_judge) / 1_000_000
 
 
-def check_prompt_fits(prompt_name: str, items: list[EvalItem]) -> None:
-    """评测集带上下文时，prompt 必须有 {{context}}；反过来也一样。不匹配就在花钱之前报错。"""
+def check_prompt_fits(
+    prompt_name: str, items: list[EvalItem], retrieval: RetrievalConfig | None = None
+) -> None:
+    """有上下文（评测集自带，或者系统会检索）时，prompt 必须有 {{context}}；反过来也一样。
+    不匹配就在花钱之前报错。"""
     uses_context = "context" in load_prompt(prompt_name).variables
-    has_context = any(it.context is not None for it in items)
+    has_context = retrieval is not None or any(it.context is not None for it in items)
     if has_context and not uses_context:
-        raise ValueError(f"这个评测集带上下文，但 prompt {prompt_name} 没有 {{{{context}}}}")
-    if uses_context and not all(it.context is not None for it in items):
-        raise ValueError(f"prompt {prompt_name} 需要上下文，但评测集里有题目没有上下文")
+        raise ValueError(f"有上下文（评测集自带或检索得到），但 prompt {prompt_name} 没有 {{{{context}}}}")
+    if uses_context and retrieval is None and not all(it.context is not None for it in items):
+        raise ValueError(f"prompt {prompt_name} 需要上下文，但评测集里有题目没有上下文，系统也不检索")
+    if retrieval is not None and retrieval.oracle and not all(it.evidence for it in items):
+        raise ValueError("oracle 模式要用证据页，但评测集里有题目没有标注证据")
+
+
+def _default_context_builder(cfg: RetrievalConfig) -> ContextBuilder:
+    from finagent.rag.retriever import ContextBuilder  # 用到检索时才导入 rag（numpy、torch）
+
+    return ContextBuilder(cfg)
+
+
+def prepare_sources(
+    cfg: RetrievalConfig, items: list[EvalItem], make_context: ContextFactory | None = None
+) -> list[list[Source]]:
+    """在并发答题之前，一次性为所有题目检索（问题一起算向量，比一题一题快得多；
+    也避免多个线程同时使用 GPU 上的向量模型）。"""
+    builder = (make_context or _default_context_builder)(cfg)
+    if cfg.oracle:
+        return builder.oracle([it.evidence for it in items])
+    return builder.retrieve([it.question for it in items])
 
 
 def run_eval(
@@ -130,16 +162,20 @@ def run_eval(
     workers: int = 5,
     out_root: Path = RUNS_EVAL,
     make_client: ClientFactory = OpenAICompatClient,
+    make_context: ContextFactory | None = None,
 ) -> Path:
-    """跑一次评测，返回记录目录。make_client 可以替换成假客户端，方便不联网测试。"""
+    """跑一次评测，返回记录目录。make_client、make_context 可以替换成假的，方便不联网测试。"""
     if system.prompt is None:
         raise ValueError("评测需要结构化输出：系统配置里必须有 prompt（v0.2 起）")
     prompt_name = prompt_name or system.prompt.name
     prompt = load_prompt(prompt_name)
     items = load_evalset(set_name, split)[:limit]
-    check_prompt_fits(prompt_name, items)
+    check_prompt_fits(prompt_name, items, system.retrieval)
     today = today or today_iso()  # 整次评测用同一个日期，并记录下来，保证可复现
     tool_kwargs = tool_options(system.tools)  # 没有工具时是空 dict
+    all_sources: list[list[Source] | None] = [None] * len(items)
+    if system.retrieval is not None:
+        all_sources = list(prepare_sources(system.retrieval, items, make_context))
 
     started, t0 = local_now(), time.perf_counter()
     run_dir = out_root / f"{started:%Y%m%d-%H%M%S}_{system.name}_{prompt_name}_{set_name}-{split}"
@@ -151,7 +187,15 @@ def run_eval(
         eval_cfg.judge.max_attempts,
     )
 
-    def process(item: EvalItem) -> tuple[EvalItem, AnswerResult | None, Grade]:
+    def process(
+        item: EvalItem, sources: list[Source] | None
+    ) -> tuple[EvalItem, AnswerResult | None, Grade]:
+        if sources is not None:
+            from finagent.rag.retriever import format_context
+
+            context: str | None = format_context(sources)
+        else:
+            context = item.context
         try:
             res = answer_question(
                 sys_client,
@@ -159,7 +203,7 @@ def run_eval(
                 item.question,
                 today=today,
                 max_attempts=system.prompt.max_attempts,
-                context=item.context,
+                context=context,
                 **tool_kwargs,
             )
         except openai.OpenAIError as e:  # 一道题出错不影响其他题
@@ -171,9 +215,12 @@ def run_eval(
         return item, res, grade
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        outcomes = list(pool.map(process, items))
+        outcomes = list(pool.map(process, items, all_sources))
 
-    rows = [_row(item, res, grade) for item, res, grade in outcomes]
+    rows = [
+        _row(item, res, grade, sources)
+        for (item, res, grade), sources in zip(outcomes, all_sources, strict=True)
+    ]
     with (run_dir / "results.jsonl").open("w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
@@ -198,6 +245,7 @@ def run_eval(
         "split": split,
         "n_items": len(items),
         "tools": tool_kwargs["tools"].names if tool_kwargs else [],
+        "retrieval": system.retrieval.model_dump() if system.retrieval else None,
         "dataset_sha256": file_sha256(dataset),
         "today": today,
         "started_at": started.isoformat(),
@@ -219,8 +267,11 @@ def run_eval(
     return run_dir
 
 
-def _row(item: EvalItem, res: AnswerResult | None, grade: Grade) -> dict:
+def _row(
+    item: EvalItem, res: AnswerResult | None, grade: Grade, sources: list[Source] | None = None
+) -> dict:
     return {
+        **_retrieval_fields(item, res, sources),
         "id": item.id,
         "category": item.category,
         "answer_type": item.answer_type,
@@ -248,6 +299,56 @@ def _row(item: EvalItem, res: AnswerResult | None, grade: Grade) -> dict:
     }
 
 
+def _retrieval_fields(
+    item: EvalItem, res: AnswerResult | None, sources: list[Source] | None
+) -> dict:
+    """检索相关的逐题记录（L05）：检索到了什么、有没有命中证据页、模型引用了哪些片段。"""
+    if sources is None:
+        return {}
+    gold = evidence_pages(item)
+    refs = {s.ref: (s.doc_name, s.page) for s in sources}
+    # 模型在 sources 里写的是 "[2]" 这样的编号；只认方括号里的数字，"10-K 2018" 里的数字不算
+    cited = []
+    if res is not None and res.answer is not None:
+        cited = sorted({int(n) for s in res.answer.sources for n in re.findall(r"\[(\d+)\]", s)})
+    return {
+        "sources": [
+            {"ref": s.ref, "doc": s.doc_name, "page": s.page, "score": s.score, "chunks": s.chunk_ids}
+            for s in sources
+        ],
+        # 有证据标注时才能判断；没有（比如种子题）时为 None
+        "retrieval_hit": any(k in gold for k in refs.values()) if gold else None,
+        "doc_hit": any(doc in {d for d, _ in gold} for doc, _ in refs.values()) if gold else None,
+        "cited": cited,
+        "cited_evidence": any(refs.get(r) in gold for r in cited) if gold and cited else None,
+    }
+
+
+def retrieval_stats(rows: list[dict]) -> dict | None:
+    """检索的汇总（L05）。最有用的是"命中时 / 没命中时的准确率"：
+    它把错误分成两桶：没找到证据（检索的问题）、找到了还答错（阅读的问题），L06 就按这个决定先优化哪边。"""
+    judged = [r for r in rows if r.get("retrieval_hit") is not None]
+    if not judged:
+        return None
+    hit = [r for r in judged if r["retrieval_hit"]]
+    miss = [r for r in judged if not r["retrieval_hit"]]
+    cited = [r for r in rows if r.get("cited_evidence") is not None]
+
+    def acc(rs: list[dict]) -> float | None:
+        return sum(r["grade"] == "correct" for r in rs) / len(rs) if rs else None
+
+    return {
+        "hit_rate": len(hit) / len(judged),
+        "doc_hit_rate": sum(1 for r in judged if r["doc_hit"]) / len(judged),
+        "n_hit": len(hit),
+        "n_miss": len(miss),
+        "accuracy_if_hit": acc(hit),
+        "accuracy_if_miss": acc(miss),
+        "mean_sources": sum(len(r["sources"]) for r in rows) / len(rows),
+        "cited_evidence_rate": sum(r["cited_evidence"] for r in cited) / len(cited) if cited else None,
+    }
+
+
 def build_summary(rows: list[dict], judge: Judge, eval_cfg: EvalConfig) -> dict:
     labels = [r["grade"] for r in rows]
     correct = [1.0 if lab == "correct" else 0.0 for lab in labels]
@@ -272,6 +373,7 @@ def build_summary(rows: list[dict], judge: Judge, eval_cfg: EvalConfig) -> dict:
         "latency_s": {"p50": percentile(latencies, 0.5), "p95": percentile(latencies, 0.95)},
         "mean_attempts": sum(r["attempts"] for r in rows) / len(rows) if rows else 0.0,
         "tools": tool_stats(rows),
+        "retrieval": retrieval_stats(rows),
     }
 
 
@@ -359,6 +461,30 @@ def render_report(meta: dict, s: dict, rows: list[dict]) -> str:
             f"平均每题调用工具 {t['mean_tool_calls']:.2f} 次、调用模型 {t['mean_llm_calls']:.2f} 次；"
             f"工具调用出错 {_pct(t['failed_rate'])}"
         )
+    rs = s.get("retrieval")
+    if rs:
+        cfg = meta.get("retrieval") or {}
+        mode = "oracle（直接给证据页）" if cfg.get("oracle") else (
+            f"索引 {cfg.get('index')}，top-{cfg.get('top_k')}，上下文 = {cfg.get('context')}"
+        )
+
+        def opt(x: float | None) -> str:
+            return "—" if x is None else _pct(x)
+
+        out += [
+            "",
+            "## 检索",
+            "",
+            f"方式：{mode}；平均每题给模型 {rs['mean_sources']:.1f} 段材料",
+            "",
+            "| 指标 | 值 | 说明 |",
+            "|---|---|---|",
+            f"| 命中证据页 | {_pct(rs['hit_rate'])} | 给模型的材料里有标注的证据页 |",
+            f"| 命中证据文档 | {_pct(rs['doc_hit_rate'])} | 至少找对了是哪份报告 |",
+            f"| 命中时的准确率 | {opt(rs['accuracy_if_hit'])}（{rs['n_hit']} 题） | 证据给到了还答错：阅读的问题 |",
+            f"| 没命中时的准确率 | {opt(rs['accuracy_if_miss'])}（{rs['n_miss']} 题） | 证据没给到：检索的问题 |",
+            f"| 引用了证据页 | {opt(rs['cited_evidence_rate'])} | 模型引用的片段里有证据页（只算有引用的题） |",
+        ]  # fmt: skip
     out += [
         "",
         "## 逐题结果",

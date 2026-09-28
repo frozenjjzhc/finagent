@@ -24,7 +24,8 @@ dependencies = [
 [project.optional-dependencies]
 # 安装：pip install -e ".[rag]"   （PowerShell 里引号必须加）
 # torch 故意不放这里：Windows 上 PyPI 默认给 CPU 版，CUDA 版要从 PyTorch 官方源装（L00 讲义 7.3）
-rag = ["httpx", "beautifulsoup4", "sentence-transformers", "faiss-cpu", "rank-bm25"]  # L05-L06
+# pymupdf 用来读 PDF（AGPL 许可，开源的学习项目可以用；闭源商用要注意）
+rag = ["numpy", "pymupdf", "sentence-transformers", "faiss-cpu", "rank-bm25"]  # L05-L06
 train = ["transformers", "accelerate", "peft", "trl", "datasets", "bitsandbytes"]     # L08-L14
 serve = ["fastapi", "uvicorn"]                                                        # L15
 dev = ["pytest", "ruff"]

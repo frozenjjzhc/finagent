@@ -1,0 +1,19 @@
+# L05 的默认索引：FinanceBench 的 84 份文档，按行重建表格，每块最多 256 个 token，块首加文档标题
+name: fb_bge_small
+description: FinanceBench 语料（rows）· bge-small · 256/32 token · 带标题 · numpy 暴力检索
+
+corpus_layout: rows
+
+embedder:
+  model: BAAI/bge-small-en-v1.5
+  revision: 5c38ec7c405ec4b44b94cc5a9bb96e735b38267a  # 固定模型版本（和评测集固定 commit 是一个道理）
+  query_prefix: "Represent this sentence for searching relevant passages: "
+  device: auto
+  batch_size: 64
+
+chunk:
+  max_tokens: 256
+  overlap_tokens: 32
+  title: true
+
+backend: numpy

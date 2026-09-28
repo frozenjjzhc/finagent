@@ -1,0 +1,29 @@
+# v0.5 · RAG 基础管线（L05）
+# 在 v0.4（阅读器 + 计算器）前面接上检索：问题 → 检索 top-5 文本块 → 取它们所在的整页 → 模型回答。
+#   索引：configs/index/fb_bge_small.yaml（FinanceBench 的 84 份文档，bge-small，256 token 一块）
+#   上下文：page（small-to-big：用小块检索、用整页回答，表格的表头和数字不会被切开）
+# 对照：v0.3（闭卷）、v0.5-chunk（只给文本块）、v0.5-oracle（直接给证据页，阅读器的上限）
+name: v0.5
+description: 检索 top-5 块 → 整页作为上下文 + 计算器
+
+llm:
+  backend: openai_compat
+  base_url: https://api.deepseek.com
+  model: deepseek-flash
+  api_key_env: DEEPSEEK_API_KEY
+  thinking: false
+  max_tokens: 2048
+
+prompt:
+  name: answer_rag_v1
+  max_attempts: 2
+
+tools:
+  enabled: [calculate]
+  max_rounds: 6
+  json_mode: false
+
+retrieval:
+  index: fb_bge_small
+  top_k: 5
+  context: page

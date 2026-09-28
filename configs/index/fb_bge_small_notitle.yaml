@@ -1,0 +1,19 @@
+# L05 消融：和 fb_bge_small 只差一处，文本块开头不加文档标题（title: false）
+name: fb_bge_small_notitle
+description: 消融：fb_bge_small，但块首不加文档标题
+
+corpus_layout: rows
+
+embedder:
+  model: BAAI/bge-small-en-v1.5
+  revision: 5c38ec7c405ec4b44b94cc5a9bb96e735b38267a  # 固定模型版本（和评测集固定 commit 是一个道理）
+  query_prefix: "Represent this sentence for searching relevant passages: "
+  device: auto
+  batch_size: 64
+
+chunk:
+  max_tokens: 256
+  overlap_tokens: 32
+  title: false  # 唯一的改动
+
+backend: numpy
