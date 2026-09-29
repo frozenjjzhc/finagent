@@ -189,6 +189,7 @@
 | S3 | Multi-agent（研究员 + 审稿人） | L07 后 |
 | S4 | 上下文缓存省钱实战：调整 prompt 结构，提高缓存命中率 | L10 时 |
 | S5 | 继续预训练（domain-adaptive pretraining），在 nanolm 上做 | L11 后 |
+| S6 | LangChain 入门与对照：用框架重写 RAG，用自己的评测和手写版本比较 | L05 后（✅ 2026-09-29） |
 
 ---
 

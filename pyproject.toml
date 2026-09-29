@@ -28,6 +28,8 @@ dependencies = [
 rag = ["numpy", "pymupdf", "sentence-transformers", "faiss-cpu", "rank-bm25"]  # L05-L06
 train = ["transformers", "accelerate", "peft", "trl", "datasets", "bitsandbytes"]     # L08-L14
 serve = ["fastapi", "uvicorn"]                                                        # L15
+# 选修 S6：LangChain 对照（只在 walkthroughs/S6_*、scripts/s6_* 里用；核心代码不依赖它，见 ADR-6）
+langchain = ["langchain", "langchain-openai", "langchain-community", "langchain-huggingface", "langchain-text-splitters"]
 dev = ["pytest", "ruff"]
 
 [project.scripts]
